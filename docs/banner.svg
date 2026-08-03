@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 220" width="960" height="220" role="img" aria-labelledby="lf-title lf-desc">
+  <title id="lf-title">Lumen Forge</title>
+  <desc id="lf-desc">Multimodal Image Generation Studio - an animated six-stage text-to-image pipeline diagram</desc>
+
+  <defs>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#0f2837" stroke-width="1" opacity="0.05"/>
+    </pattern>
+    <linearGradient id="footBar" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0e7490"/>
+      <stop offset="55%" stop-color="#0891b2"/>
+      <stop offset="100%" stop-color="#15803d"/>
+    </linearGradient>
+  </defs>
+
+  <!-- panel -->
+  <rect x="1" y="1" width="958" height="218" rx="14" fill="#f5f7f9" stroke="#d7e0e6"/>
+  <rect x="14" y="14" width="932" height="192" rx="8" fill="url(#grid)"/>
+
+  <!-- blueprint corner brackets, matching .panel::before -->
+  <path d="M 924 20 L 940 20 L 940 36" fill="none" stroke="#d7e0e6" stroke-width="1.5"/>
+  <path d="M 36 200 L 20 200 L 20 184" fill="none" stroke="#d7e0e6" stroke-width="1.5"/>
+
+  <!-- brand mark, matching .brand-mark -->
+  <g transform="translate(28,24)">
+    <rect width="40" height="40" rx="9" fill="#eef3f6" stroke="#0e7490" stroke-width="1.5"/>
+    <circle cx="12" cy="12" r="14" fill="#0e7490" opacity="0.22"/>
+    <polygon points="6,34 18,10 24,22 30,16 36,34" fill="none" stroke="#0e7490" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="16" cy="14" r="3" fill="#0e7490"/>
+  </g>
+
+  <!-- title with a blinking terminal cursor -->
+  <text x="86" y="58" font-family="ui-monospace, Consolas, 'Courier New', monospace" font-size="30" font-weight="700" letter-spacing="1.5" fill="#101c22">LUMEN FORGE</text>
+  <rect x="330" y="32" width="5" height="28" fill="#0e7490">
+    <animate attributeName="opacity" values="1;1;0;0" keyTimes="0;0.45;0.5;1" dur="1s" repeatCount="indefinite"/>
+  </rect>
+
+  <!-- subtitle, one-time fade in -->
+  <text x="88" y="80" font-family="ui-monospace, Consolas, 'Courier New', monospace" font-size="13.5" fill="#4b6570" opacity="0">
+    Multimodal Image Generation Studio
+    <animate attributeName="opacity" from="0" to="1" dur="1s" begin="0.1s" fill="freeze"/>
+  </text>
+  <text x="88" y="98" font-family="ui-monospace, Consolas, 'Courier New', monospace" font-size="11" fill="#8398a1" opacity="0">
+    Six-stage text-to-image pipeline &#183; DecodeLabs Project 3 &#183; no API key required
+    <animate attributeName="opacity" from="0" to="1" dur="1s" begin="0.35s" fill="freeze"/>
+  </text>
+
+  <!-- status legend, top right, breathing dots matching .card-status / .log colors -->
+  <g font-family="ui-monospace, Consolas, 'Courier New', monospace" font-size="9.5" fill="#4b6570">
+    <circle cx="712" cy="30" r="4" fill="#15803d">
+      <animate attributeName="opacity" values="0.45;1;0.45" dur="2.2s" begin="0s" repeatCount="indefinite"/>
+    </circle>
+    <text x="722" y="34">ACCEPTED</text>
+    <circle cx="800" cy="30" r="4" fill="#b45309">
+      <animate attributeName="opacity" values="0.45;1;0.45" dur="2.2s" begin="0.7s" repeatCount="indefinite"/>
+    </circle>
+    <text x="810" y="34">FLAGGED</text>
+    <circle cx="882" cy="30" r="4" fill="#dc2626">
+      <animate attributeName="opacity" values="0.45;1;0.45" dur="2.2s" begin="1.4s" repeatCount="indefinite"/>
+    </circle>
+    <text x="892" y="34">REJECTED</text>
+  </g>
+
+  <!-- the pipeline: a payload travels left to right through six stages -->
+  <line x1="90" y1="168" x2="898" y2="168" stroke="#d7e0e6" stroke-width="2"/>
+
+  <circle r="5" fill="#0891b2">
+    <animateMotion path="M90,168 L898,168" dur="4.2s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- stage 1: payload -->
+  <g>
+    <circle cx="90" cy="168" r="15" fill="#0e7490" opacity="0">
+      <animate attributeName="opacity" values="0;0;0.22;0;0" keyTimes="0;0.0214;0.0714;0.1214;1" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="90" cy="168" r="9" fill="#ffffff" stroke="#d7e0e6" stroke-width="1.5">
+      <animate attributeName="fill" values="#ffffff;#ffffff;#0e7490;#ffffff;#ffffff" keyTimes="0;0.0214;0.0714;0.1214;1" dur="4.2s" repeatCount="indefinite"/>
+      <animate attributeName="stroke" values="#d7e0e6;#d7e0e6;#0e7490;#d7e0e6;#d7e0e6" keyTimes="0;0.0214;0.0714;0.1214;1" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+    <text x="90" y="192" text-anchor="middle" font-family="ui-monospace, Consolas, 'Courier New', monospace" font-size="9" fill="#8398a1">PAYLOAD</text>
+  </g>
+
+  <!-- stage 2: gate 1 -->
+  <g>
+    <circle cx="224.7" cy="168" r="15" fill="#0e7490" opacity="0">
+      <animate attributeName="opacity" values="0;0;0.22;0;0" keyTimes="0;0.1643;0.2143;0.2643;1" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="224.7" cy="168" r="9" fill="#ffffff" stroke="#d7e0e6" stroke-width="1.5">
+      <animate attributeName="fill" values="#ffffff;#ffffff;#0e7490;#ffffff;#ffffff" keyTimes="0;0.1643;0.2143;0.2643;1" dur="4.2s" repeatCount="indefinite"/>
+      <animate attributeName="stroke" values="#d7e0e6;#d7e0e6;#0e7490;#d7e0e6;#d7e0e6" keyTimes="0;0.1643;0.2143;0.2643;1" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+    <text x="224.7" y="192" text-anchor="middle" font-family="ui-monospace, Consolas, 'Courier New', monospace" font-size="9" fill="#8398a1">GATE&#183;1</text>
+  </g>
+
+  <!-- stage 3: network -->
+  <g>
+    <circle cx="359.3" cy="168" r="15" fill="#0e7490" opacity="0">
+      <animate attributeName="opacity" values="0;0;0.22;0;0" keyTimes="0;0.3071;0.3571;0.4071;1" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="359.3" cy="168" r="9" fill="#ffffff" stroke="#d7e0e6" stroke-width="1.5">
+      <animate attributeName="fill" values="#ffffff;#ffffff;#0e7490;#ffffff;#ffffff" keyTimes="0;0.3071;0.3571;0.4071;1" dur="4.2s" repeatCount="indefinite"/>
+      <animate attributeName="stroke" values="#d7e0e6;#d7e0e6;#0e7490;#d7e0e6;#d7e0e6" keyTimes="0;0.3071;0.3571;0.4071;1" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+    <text x="359.3" y="192" text-anchor="middle" font-family="ui-monospace, Consolas, 'Courier New', monospace" font-size="9" fill="#8398a1">NETWORK</text>
+  </g>
+
+  <!-- stage 4: transport -->
+  <g>
+    <circle cx="494" cy="168" r="15" fill="#0e7490" opacity="0">
+      <animate attributeName="opacity" values="0;0;0.22;0;0" keyTimes="0;0.45;0.5;0.55;1" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="494" cy="168" r="9" fill="#ffffff" stroke="#d7e0e6" stroke-width="1.5">
+      <animate attributeName="fill" values="#ffffff;#ffffff;#0e7490;#ffffff;#ffffff" keyTimes="0;0.45;0.5;0.55;1" dur="4.2s" repeatCount="indefinite"/>
+      <animate attributeName="stroke" values="#d7e0e6;#d7e0e6;#0e7490;#d7e0e6;#d7e0e6" keyTimes="0;0.45;0.5;0.55;1" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+    <text x="494" y="192" text-anchor="middle" font-family="ui-monospace, Consolas, 'Courier New', monospace" font-size="9" fill="#8398a1">TRANSPORT</text>
+  </g>
+
+  <!-- stage 5: integrity -->
+  <g>
+    <circle cx="628.7" cy="168" r="15" fill="#0e7490" opacity="0">
+      <animate attributeName="opacity" values="0;0;0.22;0;0" keyTimes="0;0.5929;0.6429;0.6929;1" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="628.7" cy="168" r="9" fill="#ffffff" stroke="#d7e0e6" stroke-width="1.5">
+      <animate attributeName="fill" values="#ffffff;#ffffff;#0e7490;#ffffff;#ffffff" keyTimes="0;0.5929;0.6429;0.6929;1" dur="4.2s" repeatCount="indefinite"/>
+      <animate attributeName="stroke" values="#d7e0e6;#d7e0e6;#0e7490;#d7e0e6;#d7e0e6" keyTimes="0;0.5929;0.6429;0.6929;1" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+    <text x="628.7" y="192" text-anchor="middle" font-family="ui-monospace, Consolas, 'Courier New', monospace" font-size="9" fill="#8398a1">INTEGRITY</text>
+  </g>
+
+  <!-- stage 6: gate 2 -->
+  <g>
+    <circle cx="763.3" cy="168" r="15" fill="#0e7490" opacity="0">
+      <animate attributeName="opacity" values="0;0;0.22;0;0" keyTimes="0;0.7357;0.7857;0.8357;1" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="763.3" cy="168" r="9" fill="#ffffff" stroke="#d7e0e6" stroke-width="1.5">
+      <animate attributeName="fill" values="#ffffff;#ffffff;#0e7490;#ffffff;#ffffff" keyTimes="0;0.7357;0.7857;0.8357;1" dur="4.2s" repeatCount="indefinite"/>
+      <animate attributeName="stroke" values="#d7e0e6;#d7e0e6;#0e7490;#d7e0e6;#d7e0e6" keyTimes="0;0.7357;0.7857;0.8357;1" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+    <text x="763.3" y="192" text-anchor="middle" font-family="ui-monospace, Consolas, 'Courier New', monospace" font-size="9" fill="#8398a1">GATE&#183;2</text>
+  </g>
+
+  <!-- stage 7: automated QA -->
+  <g>
+    <circle cx="898" cy="168" r="15" fill="#15803d" opacity="0">
+      <animate attributeName="opacity" values="0;0;0.25;0;0" keyTimes="0;0.8786;0.9286;0.9786;1" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="898" cy="168" r="9" fill="#ffffff" stroke="#d7e0e6" stroke-width="1.5">
+      <animate attributeName="fill" values="#ffffff;#ffffff;#15803d;#ffffff;#ffffff" keyTimes="0;0.8786;0.9286;0.9786;1" dur="4.2s" repeatCount="indefinite"/>
+      <animate attributeName="stroke" values="#d7e0e6;#d7e0e6;#15803d;#d7e0e6;#d7e0e6" keyTimes="0;0.8786;0.9286;0.9786;1" dur="4.2s" repeatCount="indefinite"/>
+    </circle>
+    <text x="898" y="192" text-anchor="middle" font-family="ui-monospace, Consolas, 'Courier New', monospace" font-size="9" fill="#8398a1">QA</text>
+  </g>
+
+  <!-- brand foot bar -->
+  <rect x="1" y="212" width="958" height="6" rx="3" fill="url(#footBar)"/>
+</svg>

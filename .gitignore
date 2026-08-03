@@ -1,0 +1,13 @@
+.env
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Generated assets and their provenance manifest
+assets/*
+!assets/.gitkeep
+
+.DS_Store
+Thumbs.db

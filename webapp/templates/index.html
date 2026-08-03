@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lumen Forge — Multimodal Image Generation Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="stylesheet" href="/static/app.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23ffffff' stroke='%230e7490' stroke-width='1.5'/><path d='M6 22l6-8 4 5 3-3 7 6z' fill='%230e7490'/><circle cx='11' cy='10' r='2.5' fill='%230e7490'/></svg>" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"></span>
+    <div>
+      <h1>Lumen Forge</h1>
+      <p class="sub">Multimodal Image Generation Studio &middot; DecodeLabs Project 3 &middot; visual orchestration through pure programmatic control</p>
+    </div>
+  </div>
+  <div class="topbar-meta">
+    <div class="chip" id="engine-chip">engine: &mdash;</div>
+    <div class="chip" id="library-chip">library: &mdash;</div>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ===================== CONTROL COLUMN ===================== -->
+  <section class="panel controls" aria-label="Generation controls">
+    <h2 class="panel-title">[ Input Phase ]</h2>
+
+    <label class="field">
+      <span class="label-row">
+        <span>Prompt</span>
+        <em id="prompt-count">0 / 4000</em>
+      </span>
+      <textarea id="prompt" rows="5" placeholder="A lone lighthouse on a basalt cliff, storm clouds breaking, cold morning light"></textarea>
+    </label>
+
+    <label class="field">
+      <span class="label-row">
+        <span>Negative prompt</span>
+        <em class="muted">what to exclude</em>
+      </span>
+      <textarea id="negative" rows="2" placeholder="blurry, extra fingers, harsh flash"></textarea>
+    </label>
+
+    <div class="field">
+      <span class="label-row"><span>Style preset</span></span>
+      <div id="styles" class="chip-grid"></div>
+    </div>
+
+    <div class="field">
+      <span class="label-row">
+        <span>Aspect ratio &rarr; exact pixel payload</span>
+        <em id="ratio-detail" class="muted">&mdash;</em>
+      </span>
+      <div id="ratios" class="ratio-grid"></div>
+    </div>
+
+    <div class="row">
+      <label class="field grow">
+        <span class="label-row"><span>Generation count</span><em id="count-value">1</em></span>
+        <input type="range" id="count" min="1" max="4" step="1" value="1" />
+      </label>
+      <label class="field seed-field">
+        <span class="label-row"><span>Seed</span></span>
+        <div class="seed-row">
+          <input type="number" id="seed" placeholder="random" min="0" />
+          <button type="button" id="dice" class="icon-btn" title="Randomize seed">&#9860;</button>
+        </div>
+      </label>
+    </div>
+
+    <label class="field">
+      <span class="label-row"><span>Engine</span></span>
+      <select id="provider"></select>
+      <small id="provider-note" class="muted"></small>
+    </label>
+
+    <details class="advanced">
+      <summary>Transport &amp; QA policy</summary>
+      <div class="row">
+        <label class="field grow">
+          <span class="label-row"><span>Connect timeout</span><em id="ct-value">3.05s</em></span>
+          <input type="range" id="connect-timeout" min="1" max="10" step="0.05" value="3.05" />
+        </label>
+        <label class="field grow">
+          <span class="label-row"><span>Read timeout</span><em id="rt-value">60s</em></span>
+          <input type="range" id="read-timeout" min="10" max="180" step="5" value="60" />
+        </label>
+      </div>
+      <div class="row">
+        <label class="field grow">
+          <span class="label-row"><span>Max retries</span><em id="retry-value">3</em></span>
+          <input type="range" id="max-retries" min="0" max="6" step="1" value="3" />
+        </label>
+        <label class="field grow">
+          <span class="label-row"><span>QA threshold</span><em id="qa-value">7.0</em></span>
+          <input type="range" id="qa-threshold" min="0" max="10" step="0.5" value="7" />
+        </label>
+      </div>
+      <label class="checkbox">
+        <input type="checkbox" id="qa-discard" />
+        <span>Discard assets that fall below the QA gate</span>
+      </label>
+      <p class="hint">
+        The split timeout is passed to <code>requests</code> as <code>(connect, read)</code>.
+        Connect failures fail fast; read failures retry with exponential backoff and jitter.
+      </p>
+    </details>
+
+    <button id="generate" class="primary">Generate</button>
+    <p id="form-error" class="form-error" hidden></p>
+  </section>
+
+  <!-- ===================== PIPELINE COLUMN ===================== -->
+  <section class="panel pipeline" aria-label="Pipeline trace">
+    <h2 class="panel-title">[ Process Phase ]</h2>
+    <ol id="stages" class="stages"></ol>
+
+    <div class="trace-block">
+      <h3>Serialized payload</h3>
+      <pre id="payload-view" class="code">awaiting a request&hellip;</pre>
+    </div>
+
+    <div class="trace-block">
+      <h3>Gateway log</h3>
+      <div id="log" class="log"><p class="muted">No traffic yet.</p></div>
+    </div>
+  </section>
+
+  <!-- ===================== OUTPUT COLUMN ===================== -->
+  <section class="panel output" aria-label="Generated assets">
+    <div class="output-head">
+      <h2 class="panel-title">[ Output Phase ]</h2>
+      <div class="tabs">
+        <button class="tab active" data-tab="results">Results</button>
+        <button class="tab" data-tab="library">Library</button>
+      </div>
+    </div>
+
+    <div id="tab-results">
+      <div id="summary" class="summary" hidden></div>
+      <div id="gallery" class="gallery">
+        <div class="empty">
+          <div class="empty-frame" aria-hidden="true"></div>
+          <p>Describe an image and hit <strong>Generate</strong>.</p>
+          <p class="muted">Assets stream to disk in 64&nbsp;KiB chunks, get a forced pixel-level decode, then a QA score.</p>
+        </div>
+      </div>
+    </div>
+
+    <div id="tab-library" hidden>
+      <div id="library" class="library"></div>
+    </div>
+  </section>
+</main>
+
+<!-- asset inspector -->
+<div id="inspector" class="inspector" hidden>
+  <div class="inspector-panel" role="dialog" aria-modal="true" aria-label="Asset details">
+    <button id="inspector-close" class="icon-btn close" aria-label="Close">&times;</button>
+    <div class="inspector-body">
+      <img id="inspector-image" alt="" />
+      <div id="inspector-meta" class="inspector-meta"></div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# Core - required. The whole pipeline runs on these four.
+requests>=2.31         # the network gateway; split timeouts + streamed binaries
+pillow>=10.0           # Stage 5 forced pixel decode, Stage 6 image statistics
+numpy>=1.26            # Stage 6 measurement kernels
+flask>=3.0             # the studio web UI
+
+# Config - optional but recommended; loads API keys from .env
+python-dotenv>=1.0
+
+# Optional: upgrades Stage 6 from the heuristic scorer to real CLIP ViT-L/14
+# embeddings (aesthetic + semantic alignment). Roughly 1.7 GB of weights, so it
+# is deliberately not installed by default - the pipeline detects it at runtime.
+# torch>=2.2
+# transformers>=4.40
