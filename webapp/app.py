@@ -169,21 +169,57 @@ def _run_job(job_id: str, payload: dict) -> None:
 
 # --- routes ---------------------------------------------------------------
 
+_DOCUMENT_CACHE: dict[str, str] = {}
+
+
+def _build_document() -> str:
+    """The page with its stylesheet and script inlined.
+
+    Two fewer requests on a cold serverless start, and - more importantly - the
+    UI no longer depends on /static/* being routed. A catch-all rewrite is a
+    single point of failure; folding the assets into the one response that
+    definitely works removes two of the three ways this page can come up bare.
+    """
+    root = Path(app.root_path)
+    html = (root / app.template_folder / "index.html").read_text(encoding="utf-8")
+    css = (root / app.static_folder / "app.css").read_text(encoding="utf-8")
+    js = (root / app.static_folder / "app.js").read_text(encoding="utf-8")
+
+    # A literal </script> inside the script text would close the tag early.
+    js = js.replace("</script", "<\\/script")
+
+    html = html.replace(
+        '<link rel="stylesheet" href="/static/app.css" />',
+        f"<style>\n{css}\n</style>",
+    )
+    html = html.replace(
+        '<script src="/static/app.js"></script>',
+        f"<script>\n{js}\n</script>",
+    )
+    return html
+
+
+def _document() -> str:
+    if app.debug or "html" not in _DOCUMENT_CACHE:
+        _DOCUMENT_CACHE["html"] = _build_document()
+    return _DOCUMENT_CACHE["html"]
+
+
 @app.get("/")
 def index():
-    page = Path(app.root_path) / app.template_folder / "index.html"
-    if not page.is_file():
-        # A deploy that did not bundle the templates would otherwise answer the
-        # generic 404 page, which says nothing about what is actually missing.
+    try:
+        return Response(_document(), mimetype="text/html")
+    except OSError as exc:
+        # A deploy that failed to bundle the front-end would otherwise answer a
+        # generic 404 that says nothing about what is actually missing.
         return (
             jsonify({
-                "error": "index.html was not bundled with this deployment.",
-                "expected": str(page),
+                "error": "The front-end files were not bundled with this deployment.",
+                "detail": str(exc),
                 "hint": "Check includeFiles in vercel.json and .vercelignore.",
             }),
             500,
         )
-    return send_from_directory(app.template_folder, "index.html")
 
 
 @app.get("/api/health")

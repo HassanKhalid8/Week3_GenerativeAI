@@ -279,12 +279,22 @@ written — one request tells you whether a bad deploy is a routing problem or a
 bundling problem.
 
 **A note on the catch-all rewrite.** Everything is rewritten to the single
-function at `api/index.py`. Vercel used to hand that function the *original*
-request path, but now routes internal rewrites using the rewritten destination,
-so Flask would be asked for `/api/index` and return 404 for the entire site. The
-rewrite therefore carries the path through (`/:path*` → `/api/index/:path*`) and
-a small WSGI wrapper in `api/index.py` strips the function's own mount prefix
-before Flask sees it. The app is correct whichever way the platform routes.
+function at `api/index.py`, and getting the real URL to Flask takes some care:
+
+* Vercel's filesystem routing binds that file to exactly one URL, `/api/index`.
+  Rewriting to `/api/index/<path>` therefore 404s every URL but `/`, because no
+  function is mounted at those sub-paths.
+* Rewriting to a bare `/api/index` does reach the function, but Vercel now
+  routes internal rewrites using the *rewritten* path, so Flask is asked for
+  `/api/index` and answers 404 for the whole site.
+
+So the rewrite carries the original path in a `__vpath` query parameter and the
+`_VercelPath` WSGI wrapper restores it, falling back to stripping the mount
+prefix and then to the path as-given — the app is correct under all three
+routing behaviours. Belt and braces: `/` serves the stylesheet and script
+**inlined**, so the interface no longer depends on `/static/*` routing at all
+(and a cold start costs two fewer round trips). If `/api/config` ever does come
+back wrong, the page says so explicitly instead of rendering an inert shell.
 
 Two things about a serverless host change how the studio behaves, and both are
 handled rather than hidden:

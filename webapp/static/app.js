@@ -27,8 +27,16 @@ const state = {
 /* ------------------------------------------------------------------ boot */
 
 async function boot() {
-  const response = await fetch("/api/config");
-  state.config = await response.json();
+  let response;
+  try {
+    response = await fetch("/api/config");
+    state.config = await response.json();
+  } catch (error) {
+    // A misrouted deploy answers /api/config with the HTML shell, so the parse
+    // fails and every control below would silently never render. Say so.
+    bootFailed(response, error);
+    return;
+  }
 
   renderStyles();
   renderRatios();
@@ -45,6 +53,20 @@ async function boot() {
   count.max = String(state.config.max_count || 4);
   if (Number(count.value) > Number(count.max)) count.value = count.max;
   $("#count-value").textContent = count.value;
+}
+
+function bootFailed(response, error) {
+  const status = response ? `${response.status} ${response.statusText}` : "no response";
+  const box = $("#form-error");
+  box.textContent =
+    `The studio could not load its configuration from /api/config (${status}). ` +
+    `The server is reachable but that route is not returning JSON, which points at ` +
+    `the deployment's rewrite rules rather than the app itself. Check /api/health.`;
+  box.hidden = false;
+  $("#engine-chip").textContent = "engine: unavailable";
+  $("#library-chip").textContent = "library: unavailable";
+  $("#generate").disabled = true;
+  console.error("boot failed:", error);
 }
 
 function updateLibraryChip(library) {
