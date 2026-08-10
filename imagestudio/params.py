@@ -8,6 +8,7 @@ mapped to *exact* strict resolution variables before anything is transmitted.
 from __future__ import annotations
 
 import random
+import time
 from dataclasses import dataclass, field, asdict
 from typing import Any
 
@@ -71,6 +72,10 @@ class GenerationRequest:
     connect_timeout: float = 3.05
     read_timeout: float = 60.0
     max_retries: int = 3
+    # Wall-clock budget for the whole batch. Serverless hosts kill a function at
+    # a fixed ceiling, so the retry shield needs to know when to stop waiting.
+    # 0 means unbounded, which is the right default for a local run.
+    budget_seconds: float = 0.0
     # Stage 6 gate
     qa_threshold: float = 7.0
     qa_discard: bool = False
@@ -78,6 +83,7 @@ class GenerationRequest:
     # Derived, filled by validate()
     width: int = field(default=0, init=False)
     height: int = field(default=0, init=False)
+    started_at: float = field(default=0.0, init=False)
 
     def validate(self, max_prompt_chars: int = 4000) -> "GenerationRequest":
         prompt = (self.prompt or "").strip()
@@ -119,6 +125,8 @@ class GenerationRequest:
             raise ParameterError("Read timeout must exceed the connect timeout.")
         self.max_retries = max(0, min(int(self.max_retries), 6))
         self.qa_threshold = max(0.0, min(float(self.qa_threshold), 10.0))
+        self.budget_seconds = max(0.0, float(self.budget_seconds or 0.0))
+        self.started_at = time.monotonic()
         return self
 
     def seed_for(self, index: int) -> int:
@@ -131,6 +139,13 @@ class GenerationRequest:
     def timeout(self) -> tuple[float, float]:
         """The split-timeout tuple handed to requests: (connect, read)."""
         return (self.connect_timeout, self.read_timeout)
+
+    @property
+    def deadline(self) -> float | None:
+        """Monotonic stamp the batch must finish by, or None when unbounded."""
+        if not self.budget_seconds:
+            return None
+        return (self.started_at or time.monotonic()) + self.budget_seconds
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

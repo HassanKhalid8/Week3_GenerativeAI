@@ -13,17 +13,20 @@ pipeline as it actually runs rather than waiting on one opaque call.
 
 from __future__ import annotations
 
+import base64
+import io
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 import requests
+from PIL import Image
 
 from . import integrity, moderation, qa, storage, styles
 from .params import GenerationRequest, ParameterError
-from .providers import Provider, ProviderError, resolve
+from .providers import AUTH_ERROR_CODES, Provider, ProviderError, resolve
 from .transport import (
     StreamResult,
     TransportError,
@@ -33,6 +36,46 @@ from .transport import (
 )
 
 EventSink = Callable[[str, dict], None]
+
+_MIME_BY_FORMAT = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp", "GIF": "image/gif"}
+
+#: Longest edge of the inline card preview. The gallery renders at ~240 CSS px
+#: and the inspector at ~700; 1280 is generous for both at 2x density.
+PREVIEW_EDGE = 1280
+PREVIEW_QUALITY = 84
+
+#: Ceiling on how much base64 a single batch may inline. Serverless platforms cap
+#: a response body (Vercel: 4.5 MB), and four full-res PNGs sail past it - so the
+#: full-res data URI is a best-effort extra, while the small preview is always sent.
+INLINE_BUDGET_BYTES = 3_400_000
+
+
+def _data_url(path: Path, fmt: str) -> str:
+    """Base64 data URI for a verified asset - self-contained, no disk read on serve."""
+    try:
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    except OSError:
+        return ""
+    return f"data:{_MIME_BY_FORMAT.get(fmt, 'image/jpeg')};base64,{encoded}"
+
+
+def _preview_url(path: Path) -> str:
+    """A small inline JPEG of the asset - always affordable, always renderable.
+
+    The gallery must show something even when the full-res bytes are too large to
+    inline and /assets/<file> is unreachable, which is the normal state on a
+    serverless host whose next request lands on a colder instance.
+    """
+    try:
+        with Image.open(path) as image:
+            image.load()
+            preview = image.convert("RGB")
+            preview.thumbnail((PREVIEW_EDGE, PREVIEW_EDGE), Image.LANCZOS)
+            buffer = io.BytesIO()
+            preview.save(buffer, format="JPEG", quality=PREVIEW_QUALITY, optimize=True)
+    except (OSError, ValueError):
+        return ""
+    return f"data:image/jpeg;base64,{base64.b64encode(buffer.getvalue()).decode('ascii')}"
 
 STAGES = [
     ("payload", "Prompt Payload Formulation"),
@@ -52,8 +95,11 @@ class AssetOutcome:
     seed: int
     filename: str = ""
     url: str = ""
+    data_url: str = ""
+    preview_url: str = ""
     error: str = ""
     error_code: str = ""
+    needs_key: str = ""
     payload: dict[str, Any] = field(default_factory=dict)
     transport: dict[str, Any] = field(default_factory=dict)
     stream: dict[str, Any] = field(default_factory=dict)
@@ -70,8 +116,11 @@ class AssetOutcome:
             "seed": self.seed,
             "filename": self.filename,
             "url": self.url,
+            "data_url": self.data_url,
+            "preview_url": self.preview_url,
             "error": self.error,
             "error_code": self.error_code,
+            "needs_key": self.needs_key,
             "payload": self.payload,
             "transport": self.transport,
             "stream": self.stream,
@@ -95,6 +144,8 @@ class BatchResult:
     elapsed_ms: int = 0
     error: str = ""
     error_code: str = ""
+    needs_key: str = ""
+    storage_note: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -108,6 +159,8 @@ class BatchResult:
             "elapsed_ms": self.elapsed_ms,
             "error": self.error,
             "error_code": self.error_code,
+            "needs_key": self.needs_key,
+            "storage_note": self.storage_note,
             "accepted": sum(1 for a in self.assets if a.status == "accepted"),
             "counts": {
                 status: sum(1 for a in self.assets if a.status == status)
@@ -119,21 +172,48 @@ class BatchResult:
 class Studio:
     """Runs generation batches through the full pipeline."""
 
-    def __init__(self, provider: Provider | None = None, session: requests.Session | None = None):
+    def __init__(
+        self,
+        provider: Provider | None = None,
+        session: requests.Session | None = None,
+        keys: Mapping[str, str] | None = None,
+    ):
         self._provider = provider
         self._session = session or build_session()
+        # Caller-supplied API keys for this batch only. Held on the instance
+        # (which the web layer creates per request and drops) so they never
+        # reach GenerationRequest.to_dict(), the manifest, or any global.
+        self._keys = dict(keys or {})
+        self._inline_budget = INLINE_BUDGET_BYTES
 
     def provider_for(self, name: str) -> Provider:
         if self._provider is not None and name in ("auto", self._provider.name):
             return self._provider
-        return resolve(name)
+        return resolve(name, self._keys)
 
     # -- the batch ------------------------------------------------------
     def generate(self, request: GenerationRequest, on_event: EventSink | None = None) -> BatchResult:
         emit = on_event or (lambda *_: None)
         started = time.perf_counter()
+        self._inline_budget = INLINE_BUDGET_BYTES
 
-        provider = self.provider_for(request.provider)
+        try:
+            provider = self.provider_for(request.provider)
+        except ProviderError as exc:
+            # The engine cannot even be constructed - almost always a missing key.
+            emit("stage", {"stage": "payload", "state": "failed", "detail": str(exc), "code": exc.code})
+            return BatchResult(
+                provider=request.provider,
+                provider_label=request.provider,
+                request=request.to_dict(),
+                composed_prompt="",
+                composed_negative="",
+                gate1={},
+                error=str(exc),
+                error_code=exc.code,
+                needs_key=request.provider if exc.code == "missing_key" else "",
+                elapsed_ms=int((time.perf_counter() - started) * 1000),
+            )
 
         # ---- Stage 1: prompt payload formulation ----------------------
         emit("stage", {"stage": "payload", "state": "running"})
@@ -212,6 +292,18 @@ class Studio:
             result.assets.append(outcome)
             emit("asset_done", {"index": index, "outcome": outcome.to_dict()})
 
+        # Surface a credential problem at batch level so the UI can offer the fix
+        # once, rather than repeating it on every card.
+        for outcome in result.assets:
+            if outcome.needs_key:
+                result.needs_key = outcome.needs_key
+                result.error = result.error or outcome.error
+                result.error_code = result.error_code or outcome.error_code
+                break
+
+        if storage.is_ephemeral():
+            result.storage_note = storage.EPHEMERAL_NOTE
+
         result.elapsed_ms = int((time.perf_counter() - started) * 1000)
         emit("batch_done", result.to_dict())
         return result
@@ -241,10 +333,24 @@ class Studio:
             )
         except (ProviderError, TransportError) as exc:
             code = getattr(exc, "code", "provider_error")
-            # A refusal that reached us as an HTTP error is a Gate 2 event.
-            verdict = moderation.gate_output_response(getattr(exc, "status", None) or 0, f"{code} {exc}")
             outcome.error = str(exc)
             outcome.error_code = code
+
+            if code in AUTH_ERROR_CODES:
+                # A rejected or exhausted key is a credential problem, not a
+                # moderation one - routing it through Gate 2 would tell the user
+                # to rephrase their prompt, which cannot possibly help.
+                outcome.needs_key = provider.name
+                emit(
+                    "stage",
+                    {"stage": "network", "state": "failed", "index": index,
+                     "detail": str(exc), "code": code, "needs_key": provider.name},
+                )
+                outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
+                return outcome
+
+            # A refusal that reached us as an HTTP error is a Gate 2 event.
+            verdict = moderation.gate_output_response(getattr(exc, "status", None) or 0, f"{code} {exc}")
             if not verdict.ok:
                 outcome.status = "rejected"
                 outcome.gate2 = verdict.to_dict()
@@ -317,6 +423,18 @@ class Studio:
 
         outcome.filename = destination.name
         outcome.url = f"/assets/{destination.name}"
+        # Serverless deploys (Vercel, Lambda) ship a read-only bundle and an
+        # ephemeral /tmp, so a later request for /assets/<file> can land on a
+        # different, colder instance that never wrote this file. Sending the
+        # bytes inline means the browser never depends on a second disk read.
+        # The small preview always goes; the full-res copy only while the
+        # response body still has room for it.
+        outcome.preview_url = _preview_url(destination)
+        self._inline_budget -= len(outcome.preview_url)
+        full = _data_url(destination, report.fmt)
+        if full and len(full) <= self._inline_budget:
+            outcome.data_url = full
+            self._inline_budget -= len(full)
 
         # ---- Stage 3b: security gate 2 (output filter) ----------------
         emit("stage", {"stage": "gate2", "state": "running", "index": index})
@@ -338,6 +456,8 @@ class Studio:
             outcome.error_code = verdict.code
             outcome.filename = ""
             outcome.url = ""
+            outcome.data_url = ""
+            outcome.preview_url = ""
             emit("stage", {"stage": "gate2", "state": "failed", "index": index, "detail": verdict.message})
             outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
             self._record(request, provider, outcome, prompt, negative)
@@ -363,6 +483,8 @@ class Studio:
                 outcome.error_code = "qa_below_threshold"
                 outcome.filename = ""
                 outcome.url = ""
+                outcome.data_url = ""
+                outcome.preview_url = ""
 
         outcome.elapsed_ms = int((time.perf_counter() - started) * 1000)
         self._record(request, provider, outcome, prompt, negative)

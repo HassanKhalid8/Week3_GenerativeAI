@@ -122,7 +122,7 @@ code, pre, .mono { font-family: var(--mono); }
 }
 .label-row em { font-style: normal; color: var(--ink-faint); text-transform: none; }
 
-textarea, input[type="number"], select {
+textarea, input[type="number"] {
   width: 100%; background: var(--panel); color: var(--ink);
   border: 1px solid var(--line); border-radius: 8px;
   padding: 9px 11px; font-size: 13px; font-family: inherit;
@@ -130,19 +130,151 @@ textarea, input[type="number"], select {
 }
 textarea { resize: vertical; line-height: 1.55; }
 
-textarea:focus, input:focus, select:focus {
+textarea:focus, input:focus {
   outline: none; border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.16);
 }
 
-select { appearance: none; cursor: pointer;
+small.muted { display: block; margin-top: 5px; font-size: 11px; line-height: 1.45; }
+
+.link-btn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.4px;
+  color: var(--accent); text-transform: none; text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-btn:hover { color: var(--accent-dim); }
+
+/* ---------------- engine combobox ----------------
+   A native <select> renders an OS listbox: system font, grey disabled rows, no
+   room for the per-engine notes or a key affordance. This is the same control
+   drawn from the page's own tokens. */
+.combo { position: relative; }
+
+.combo-trigger {
+  width: 100%; text-align: left; cursor: pointer;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 9px 32px 9px 11px; font-size: 13px; font-family: var(--sans);
+  transition: border-color 0.15s, box-shadow 0.15s;
   background-image: linear-gradient(45deg, transparent 50%, var(--ink-dim) 50%),
                     linear-gradient(135deg, var(--ink-dim) 50%, transparent 50%);
   background-position: calc(100% - 16px) 52%, calc(100% - 11px) 52%;
   background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
 }
+.combo-trigger:hover { border-color: var(--accent-dim); }
+.combo-trigger:focus-visible,
+.combo-trigger[aria-expanded="true"] {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.16);
+}
+.combo-trigger[aria-expanded="true"] {
+  background-image: linear-gradient(225deg, transparent 50%, var(--accent) 50%),
+                    linear-gradient(315deg, var(--accent) 50%, transparent 50%);
+}
+.combo-value { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-small.muted { display: block; margin-top: 5px; font-size: 11px; line-height: 1.45; }
+.combo-list {
+  position: absolute; z-index: 30; top: calc(100% + 5px); left: 0; right: 0;
+  margin: 0; padding: 4px; list-style: none;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(16, 28, 34, 0.18);
+  max-height: 320px; overflow-y: auto;
+  animation: combo-drop 0.12s ease both;
+}
+@keyframes combo-drop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+.combo-opt {
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 8px;
+  padding: 7px 9px; border-radius: 6px; cursor: pointer;
+  border: 1px solid transparent;
+}
+.combo-opt-name { font-size: 12.5px; color: var(--ink); }
+.combo-opt-note {
+  grid-column: 1 / -1; font-family: var(--mono); font-size: 10px;
+  color: var(--ink-faint); line-height: 1.4;
+}
+.combo-badge {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.6px;
+  text-transform: uppercase; padding: 2px 7px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--ink-faint);
+  white-space: nowrap; align-self: center;
+}
+.combo-badge.free { color: var(--ok); border-color: rgba(21, 128, 61, 0.3); }
+.combo-badge.paid { color: var(--warn); border-color: rgba(180, 83, 9, 0.3); }
+.combo-badge.saved { color: var(--accent); border-color: var(--accent-dim); background: rgba(14, 116, 144, 0.08); }
+.combo-badge.locked { color: var(--ink-faint); }
+
+.combo-opt.active { background: rgba(14, 116, 144, 0.08); border-color: var(--accent-dim); }
+.combo-opt[aria-selected="true"] .combo-opt-name { color: var(--accent); font-weight: 600; }
+.combo-opt.locked .combo-opt-name { color: var(--ink-faint); }
+.combo-opt.locked .combo-opt-note { color: var(--accent); }
+
+/* ---------------- key vault ---------------- */
+.kv-panel { width: min(620px, 96vw); }
+.kv-panel .panel-title { padding-right: 32px; }
+
+.kv-privacy {
+  border: 1px solid rgba(21, 128, 61, 0.28); background: rgba(21, 128, 61, 0.06);
+  border-radius: 8px; padding: 11px 13px; margin-bottom: 16px;
+}
+.kv-privacy-head {
+  margin: 0 0 6px; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.8px;
+  text-transform: uppercase; color: var(--ok);
+}
+.kv-privacy ul { margin: 0; padding-left: 16px; }
+.kv-privacy li { font-size: 11.5px; line-height: 1.55; color: var(--ink-dim); margin-bottom: 3px; }
+.kv-privacy code { font-size: 10.5px; }
+
+.kv-rows { display: flex; flex-direction: column; gap: 10px; }
+
+.kv-row {
+  border: 1px solid var(--line-soft); border-radius: 8px;
+  padding: 11px 12px; background: var(--panel-2);
+}
+.kv-row.saved { border-color: var(--accent-dim); background: rgba(14, 116, 144, 0.05); }
+
+.kv-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.kv-name { font-size: 13px; font-weight: 600; }
+.kv-env { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); }
+.kv-input-row { display: flex; gap: 6px; margin-top: 8px; }
+.kv-input-row input {
+  flex: 1; min-width: 0;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; font-size: 12px; font-family: var(--mono);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.kv-input-row input:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(14, 116, 144, 0.16);
+}
+
+.kv-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+.kv-btn {
+  font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px;
+  padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+  color: var(--ink-dim); background: var(--panel); cursor: pointer; transition: all 0.15s;
+}
+.kv-btn:hover:not(:disabled) { color: var(--accent); border-color: var(--accent-dim); }
+.kv-btn:disabled { opacity: 0.5; cursor: default; }
+.kv-btn.primary-btn { color: #ffffff; background: var(--accent); border-color: var(--accent); }
+.kv-btn.primary-btn:hover:not(:disabled) { filter: brightness(1.12); color: #ffffff; }
+.kv-btn.danger:hover:not(:disabled) { color: var(--bad); border-color: rgba(220, 38, 38, 0.4); }
+
+.kv-get {
+  font-family: var(--mono); font-size: 10px; color: var(--accent);
+  margin-left: auto; text-decoration: none;
+}
+.kv-get:hover { text-decoration: underline; }
+
+.kv-status {
+  margin-top: 8px; font-family: var(--mono); font-size: 10.5px; line-height: 1.5;
+  color: var(--ink-faint);
+}
+.kv-status.ok { color: var(--ok); }
+.kv-status.bad { color: var(--bad); }
+.kv-status.busy { color: var(--accent); }
 
 .row { display: flex; gap: 12px; }
 .grow { flex: 1; min-width: 0; }
@@ -219,8 +351,15 @@ input[type="range"]::-moz-range-thumb {
 .form-error {
   margin: 10px 0 0; padding: 9px 11px; border-radius: 8px; font-size: 12px;
   background: rgba(220, 38, 38, 0.08); border: 1px solid rgba(220, 38, 38, 0.3);
-  color: #b91c1c;
+  color: #b91c1c; line-height: 1.5;
 }
+.form-error .fix-btn {
+  display: inline-block; margin-top: 8px;
+  font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px;
+  padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  border: 1px solid rgba(220, 38, 38, 0.4); background: var(--panel); color: #b91c1c;
+}
+.form-error .fix-btn:hover { border-color: var(--bad); filter: brightness(0.97); }
 
 .advanced {
   border: 1px solid var(--line-soft); border-radius: 8px;
@@ -399,6 +538,14 @@ input[type="range"]::-moz-range-thumb {
 
 /* library */
 .library { display: flex; flex-direction: column; gap: 6px; }
+
+.lib-banner {
+  border: 1px solid rgba(180, 83, 9, 0.3); background: rgba(180, 83, 9, 0.07);
+  border-radius: 8px; padding: 9px 11px; margin-bottom: 6px;
+  font-size: 11.5px; line-height: 1.55; color: var(--warn);
+}
+.lib-banner code { font-size: 10.5px; }
+.lib-row.session { border-style: dashed; }
 
 .lib-row {
   display: grid; grid-template-columns: 74px 1fr auto; gap: 12px; align-items: center;

@@ -35,6 +35,13 @@ class OpenAIImageProvider(Provider):
     supports_seed = False
     free = False
     notes = "Paid. DALL-E 3 retired March 2026; migrated to gpt-image. Returns b64_json."
+    key_url = "https://platform.openai.com/api-keys"
+    key_hint = "sk-..."
+    verify_url = "https://api.openai.com/v1/models"
+
+    def verify_summary(self, payload: Any) -> str:
+        models = (payload or {}).get("data") or []
+        return f"{len(models)} model(s) visible to this key." if models else ""
 
     def _size(self, request: GenerationRequest) -> str:
         if request.aspect_ratio == "1:1":
@@ -72,7 +79,9 @@ class OpenAIImageProvider(Provider):
         on_event: Callable[[str, dict], None] | None = None,
     ) -> ProviderResult:
         if not self.api_key:
-            raise ProviderError("OPENAI_API_KEY is not set.", code="missing_key")
+            raise ProviderError(
+                "OpenAI needs an API key. Add one under Engine -> Manage keys.", code="missing_key"
+            )
 
         payload = self.build_payload(request, prompt, negative, seed)
         response, trace = request_with_retry(
@@ -88,6 +97,7 @@ class OpenAIImageProvider(Provider):
             max_retries=request.max_retries,
             stream=False,
             on_event=on_event,
+            deadline=request.deadline,
         )
 
         try:
@@ -99,12 +109,15 @@ class OpenAIImageProvider(Provider):
 
         if response.status_code != 200:
             error = envelope.get("error") or {}
-            code = str(error.get("code") or "unexpected_response")
-            raise ProviderError(
-                f"Engine returned {response.status_code}: {error.get('message', 'unknown error')}",
-                code="content_policy_violation" if "policy" in code else code,
-                status=response.status_code,
-            )
+            code = str(error.get("code") or "")
+            message = str(error.get("message", "unknown error"))
+            if "policy" in code:
+                raise ProviderError(
+                    f"Engine returned {response.status_code}: {message}",
+                    code="content_policy_violation",
+                    status=response.status_code,
+                )
+            raise self._auth_error(response.status_code, f"{code} {message}", fallback_code=code or "unexpected_response")
 
         items = envelope.get("data") or []
         if not items or not items[0].get("b64_json"):

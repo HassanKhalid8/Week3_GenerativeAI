@@ -1,8 +1,15 @@
 /* Studio front-end.
-   Drives the control panel, consumes the SSE pipeline trace, and renders assets. */
+   Drives the control panel, consumes the pipeline trace, and renders assets.
+
+   Two transports feed one renderer: Server-Sent Events locally, and a single
+   POST whose collected event log is replayed on serverless hosts, where the
+   job that produced the events no longer exists by the time a second request
+   arrives. Both funnel through handleEvent(). */
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+const KEY_STORE = "lumenforge.api-keys.v1";
 
 const state = {
   config: null,
@@ -12,6 +19,9 @@ const state = {
   cards: new Map(),
   results: new Map(),
   eventSource: null,
+  sessionLibrary: [],
+  lastRequest: null,
+  combo: { open: false, index: 0, options: [], typed: "", typedAt: 0 },
 };
 
 /* ------------------------------------------------------------------ boot */
@@ -22,19 +32,64 @@ async function boot() {
 
   renderStyles();
   renderRatios();
-  renderProviders();
   renderStages();
   wireControls();
+  wireCombo();
+  wireVault();
 
-  const active = state.config.providers.find((p) => p.name === state.config.active_provider);
-  $("#engine-chip").textContent = `engine: ${active ? active.label : state.config.active_provider}`;
+  await refreshEngines();
   updateLibraryChip(state.config.library);
   updatePromptLimit();
+
+  const count = $("#count");
+  count.max = String(state.config.max_count || 4);
+  if (Number(count.value) > Number(count.max)) count.value = count.max;
+  $("#count-value").textContent = count.value;
 }
 
 function updateLibraryChip(library) {
   if (!library) return;
-  $("#library-chip").textContent = `library: ${library.assets} asset(s) / ${library.megabytes} MB`;
+  const suffix = library.ephemeral ? " · ephemeral" : "";
+  $("#library-chip").textContent =
+    `library: ${library.assets} asset(s) / ${library.megabytes} MB${suffix}`;
+}
+
+/* ------------------------------------------------------------- key store */
+/* Keys live in this browser and nowhere else. They are attached to a generate
+   request only when that request actually needs them, and the server drops
+   them the moment it is done. */
+
+function loadKeys() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(KEY_STORE) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveKey(engine, value) {
+  const keys = loadKeys();
+  keys[engine] = value;
+  localStorage.setItem(KEY_STORE, JSON.stringify(keys));
+}
+
+function removeKey(engine) {
+  const keys = loadKeys();
+  delete keys[engine];
+  localStorage.setItem(KEY_STORE, JSON.stringify(keys));
+}
+
+function maskKey(value) {
+  return value.length >= 8 ? `••••${value.slice(-4)}` : "••••";
+}
+
+/** Only the keys this request could possibly need. "Auto" has to consider them
+    all because the server picks the engine; a named engine needs exactly one. */
+function keysForRequest() {
+  const stored = loadKeys();
+  if (state.provider === "auto") return stored;
+  return stored[state.provider] ? { [state.provider]: stored[state.provider] } : {};
 }
 
 /* -------------------------------------------------------------- controls */
@@ -96,30 +151,195 @@ function updateRatioDetail() {
     `${ratio.width} x ${ratio.height} - ${ratio.pixels.toLocaleString()} px - ${ratio.target}`;
 }
 
-function renderProviders() {
-  const select = $("#provider");
-  select.innerHTML = "";
+/* ------------------------------------------------------- engine combobox */
 
-  const auto = document.createElement("option");
-  auto.value = "auto";
-  auto.textContent = "Auto - first available engine";
-  select.appendChild(auto);
+/** Re-ask the server which engines are usable, with this browser's keys applied.
+    The server knows about its own env vars too, so it is the honest authority. */
+async function refreshEngines() {
+  try {
+    const response = await fetch("/api/engines", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_keys: loadKeys() }),
+    });
+    const data = await response.json();
+    state.config.providers = data.providers;
+    state.config.active_provider = data.active_provider;
+  } catch {
+    /* keep whatever /api/config gave us */
+  }
+  const active = state.config.providers.find((p) => p.name === state.config.active_provider);
+  $("#engine-chip").textContent = `engine: ${active ? active.label : state.config.active_provider}`;
 
+  // A saved key may have been removed while its engine was selected.
+  if (state.provider !== "auto") {
+    const chosen = state.config.providers.find((p) => p.name === state.provider);
+    if (!chosen || !chosen.available) state.provider = "auto";
+  }
+  renderCombo();
+  updatePromptLimit();
+}
+
+function comboOptions() {
+  const auto = state.config.providers.find((p) => p.name === state.config.active_provider);
+  const options = [
+    {
+      value: "auto",
+      name: "Auto",
+      badge: "auto",
+      badgeClass: "",
+      note: auto ? `Picks the first usable engine — currently ${auto.label}.` : "",
+      locked: false,
+    },
+  ];
   state.config.providers.forEach((provider) => {
-    const option = document.createElement("option");
-    option.value = provider.name;
-    const badge = provider.available ? (provider.free ? "free" : "paid") : `needs ${provider.env_key}`;
-    option.textContent = `${provider.label} - ${badge}`;
-    option.disabled = !provider.available;
-    select.appendChild(option);
+    let badge = provider.free ? "free" : "paid";
+    let badgeClass = provider.free ? "free" : "paid";
+    let note = provider.notes;
+
+    if (!provider.available) {
+      badge = "needs key";
+      badgeClass = "locked";
+      note = `Requires ${provider.env_key}. Click to add your key.`;
+    } else if (provider.key_source === "user") {
+      badge = "key saved";
+      badgeClass = "saved";
+    } else if (provider.key_source === "env") {
+      badge = "server key";
+      badgeClass = "saved";
+    }
+
+    options.push({
+      value: provider.name,
+      name: provider.label,
+      badge,
+      badgeClass,
+      note,
+      locked: !provider.available,
+    });
+  });
+  return options;
+}
+
+function renderCombo() {
+  const list = $("#provider-list");
+  const options = comboOptions();
+  state.combo.options = options;
+
+  list.innerHTML = "";
+  options.forEach((option, index) => {
+    const item = document.createElement("li");
+    item.className = `combo-opt${option.locked ? " locked" : ""}`;
+    item.id = `provider-opt-${index}`;
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", String(option.value === state.provider));
+    if (option.locked) item.setAttribute("aria-disabled", "true");
+
+    const name = document.createElement("span");
+    name.className = "combo-opt-name";
+    name.textContent = option.locked ? `🔒 ${option.name}` : option.name;
+
+    const badge = document.createElement("span");
+    badge.className = `combo-badge ${option.badgeClass}`;
+    badge.textContent = option.badge;
+
+    const note = document.createElement("span");
+    note.className = "combo-opt-note";
+    note.textContent = option.note || "";
+
+    item.append(name, badge, note);
+    item.addEventListener("click", () => chooseOption(index));
+    item.addEventListener("mousemove", () => setActiveOption(index));
+    list.appendChild(item);
   });
 
-  select.value = "auto";
-  select.addEventListener("change", () => {
-    state.provider = select.value;
-    updatePromptLimit();
-  });
+  const selected = options.find((o) => o.value === state.provider) || options[0];
+  $("#provider-value").textContent = selected.name;
+  state.combo.index = Math.max(0, options.indexOf(selected));
+  if (state.combo.open) setActiveOption(state.combo.index);
   updateProviderNote();
+}
+
+function setActiveOption(index) {
+  const items = $$("#provider-list .combo-opt");
+  if (!items.length) return;
+  state.combo.index = (index + items.length) % items.length;
+  items.forEach((item, i) => item.classList.toggle("active", i === state.combo.index));
+  const active = items[state.combo.index];
+  $("#provider-trigger").setAttribute("aria-activedescendant", active.id);
+  active.scrollIntoView({ block: "nearest" });
+}
+
+function openCombo() {
+  if (state.combo.open) return;
+  state.combo.open = true;
+  $("#provider-list").hidden = false;
+  $("#provider-trigger").setAttribute("aria-expanded", "true");
+  setActiveOption(state.combo.index);
+}
+
+function closeCombo(refocus = true) {
+  if (!state.combo.open) return;
+  state.combo.open = false;
+  $("#provider-list").hidden = true;
+  const trigger = $("#provider-trigger");
+  trigger.setAttribute("aria-expanded", "false");
+  trigger.removeAttribute("aria-activedescendant");
+  if (refocus) trigger.focus();
+}
+
+function chooseOption(index) {
+  const option = state.combo.options[index];
+  if (!option) return;
+  if (option.locked) {
+    // A locked engine is not a dead end - it is an invitation to add the key.
+    closeCombo(false);
+    openVault(option.value);
+    return;
+  }
+  state.provider = option.value;
+  closeCombo();
+  renderCombo();
+  updatePromptLimit();
+}
+
+function comboTypeahead(char) {
+  const now = Date.now();
+  state.combo.typed = now - state.combo.typedAt > 700 ? char : state.combo.typed + char;
+  state.combo.typedAt = now;
+  const match = state.combo.options.findIndex((o) =>
+    o.name.toLowerCase().startsWith(state.combo.typed.toLowerCase())
+  );
+  if (match >= 0) setActiveOption(match);
+}
+
+function wireCombo() {
+  const trigger = $("#provider-trigger");
+
+  trigger.addEventListener("click", () => (state.combo.open ? closeCombo() : openCombo()));
+
+  trigger.addEventListener("keydown", (event) => {
+    const { key } = event;
+    if (!state.combo.open) {
+      if (key === "ArrowDown" || key === "ArrowUp" || key === "Enter" || key === " ") {
+        event.preventDefault();
+        openCombo();
+      }
+      return;
+    }
+    if (key === "ArrowDown") { event.preventDefault(); setActiveOption(state.combo.index + 1); }
+    else if (key === "ArrowUp") { event.preventDefault(); setActiveOption(state.combo.index - 1); }
+    else if (key === "Home") { event.preventDefault(); setActiveOption(0); }
+    else if (key === "End") { event.preventDefault(); setActiveOption(state.combo.options.length - 1); }
+    else if (key === "Enter" || key === " ") { event.preventDefault(); chooseOption(state.combo.index); }
+    else if (key === "Escape") { event.preventDefault(); closeCombo(); }
+    else if (key === "Tab") { closeCombo(false); }
+    else if (key.length === 1 && /\S/.test(key)) { comboTypeahead(key); }
+  });
+
+  document.addEventListener("click", (event) => {
+    if (state.combo.open && !$("#provider-combo").contains(event.target)) closeCombo(false);
+  });
 }
 
 function activeProvider() {
@@ -182,7 +402,9 @@ function wireControls() {
     if (event.target === $("#inspector")) closeInspector();
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") closeInspector();
+    if (event.key !== "Escape") return;
+    if (!$("#keyvault").hidden) closeVault();
+    else closeInspector();
   });
 }
 
@@ -239,10 +461,102 @@ function clearLog() {
 
 /* ------------------------------------------------------------- generate */
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** One renderer for both transports. */
+function handleEvent(kind, data) {
+  switch (kind) {
+    case "stage": {
+      setStage(data.stage, data.state, data.detail || "");
+      if (data.detail) {
+        const level =
+          data.state === "failed" ? "bad" :
+          data.state === "warn" ? "warn" :
+          data.state === "done" ? "ok" : "";
+        log(`${data.stage}: ${data.detail}`, level);
+      }
+      break;
+    }
+    case "note":
+      log(data.text, "warn");
+      break;
+    case "retry":
+      log(
+        `retry ${data.attempt}: ${data.detail} - backing off ${(data.sleep_ms / 1000).toFixed(1)}s (jittered)`,
+        "warn"
+      );
+      break;
+    case "progress": {
+      const card = state.cards.get(data.index);
+      if (card) {
+        const status = card.querySelector(".card-status");
+        if (status) status.textContent = `${(data.bytes / 1024).toFixed(0)} KiB`;
+      }
+      break;
+    }
+    case "asset_start": {
+      log(`asset ${data.index + 1}/${data.total} - seed ${data.seed}`, "info");
+      const card = state.cards.get(data.index);
+      if (card) {
+        const status = card.querySelector(".card-status");
+        if (status) status.textContent = "streaming";
+      }
+      break;
+    }
+    case "asset_done":
+      state.results.set(data.index, data.outcome);
+      if (data.outcome.payload) {
+        $("#payload-view").textContent = JSON.stringify(data.outcome.payload, null, 2);
+      }
+      rememberInSession(data.outcome);
+      renderCard(data.index, data.outcome);
+      break;
+    case "error":
+      log(`error: ${data.message}`, "bad");
+      break;
+    case "done":
+      finishBatch(data);
+      break;
+    default:
+      break;
+  }
+}
+
+function finishBatch(batch) {
+  setBusy(false);
+  if (batch && batch.error) {
+    showFormError(batch.error, batch.needs_key);
+    log(`batch halted: ${batch.error}`, "bad");
+    state.cards.forEach((card) => {
+      if (card.classList.contains("pending")) card.remove();
+    });
+    if (!$("#gallery").children.length) $("#gallery").innerHTML = emptyState();
+  }
+  renderSummary(batch);
+  refreshLibraryChip();
+}
+
+function showFormError(message, needsKey) {
+  const box = $("#form-error");
+  box.textContent = message;
+  if (needsKey) {
+    const provider = state.config.providers.find((p) => p.name === needsKey);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "fix-btn";
+    button.textContent = `Add key for ${provider ? provider.label : needsKey}`;
+    button.addEventListener("click", () => openVault(needsKey));
+    box.appendChild(document.createElement("br"));
+    box.appendChild(button);
+  }
+  box.hidden = false;
+}
+
 async function generate() {
   const prompt = $("#prompt").value.trim();
   const errorBox = $("#form-error");
   errorBox.hidden = true;
+  errorBox.textContent = "";
 
   if (!prompt) {
     errorBox.textContent = "Enter a prompt first - the payload cannot be serialized without one.";
@@ -264,7 +578,9 @@ async function generate() {
     max_retries: Number($("#max-retries").value),
     qa_threshold: Number($("#qa-threshold").value),
     qa_discard: $("#qa-discard").checked,
+    api_keys: keysForRequest(),
   };
+  state.lastRequest = payload;
 
   setBusy(true);
   resetStages();
@@ -277,6 +593,15 @@ async function generate() {
 
   log(`dispatching ${payload.count} generation(s) at ${state.ratio}`, "info");
 
+  if (state.config.streaming === false) {
+    await generateSync(payload);
+  } else {
+    await generateStreaming(payload);
+  }
+}
+
+/** Local transport: the pipeline narrates itself over SSE while it runs. */
+async function generateStreaming(payload) {
   let jobId;
   try {
     const response = await fetch("/api/generate", {
@@ -294,72 +619,47 @@ async function generate() {
   const source = new EventSource(`/api/jobs/${jobId}/events`);
   state.eventSource = source;
 
-  source.addEventListener("stage", (event) => {
-    const data = JSON.parse(event.data);
-    setStage(data.stage, data.state, data.detail || "");
-    if (data.detail) {
-      const level = data.state === "failed" ? "bad" : data.state === "warn" ? "warn" : data.state === "done" ? "ok" : "";
-      log(`${data.stage}: ${data.detail}`, level);
-    }
-    if (data.stage === "payload" && data.state === "done") {
-      // Payload preview lands with the first asset event; keep the stage detail here.
-    }
-  });
-
-  source.addEventListener("note", (event) => log(JSON.parse(event.data).text, "warn"));
-
-  source.addEventListener("retry", (event) => {
-    const data = JSON.parse(event.data);
-    log(`retry ${data.attempt}: ${data.detail} - backing off ${(data.sleep_ms / 1000).toFixed(1)}s (jittered)`, "warn");
-  });
-
-  source.addEventListener("progress", (event) => {
-    const data = JSON.parse(event.data);
-    const card = state.cards.get(data.index);
-    if (card) card.querySelector(".card-status").textContent = `${(data.bytes / 1024).toFixed(0)} KiB`;
-  });
-
-  source.addEventListener("asset_start", (event) => {
-    const data = JSON.parse(event.data);
-    log(`asset ${data.index + 1}/${data.total} - seed ${data.seed}`, "info");
-    const card = state.cards.get(data.index);
-    if (card) card.querySelector(".card-status").textContent = "streaming";
-  });
-
-  source.addEventListener("asset_done", (event) => {
-    const data = JSON.parse(event.data);
-    state.results.set(data.index, data.outcome);
-    if (data.outcome.payload) {
-      $("#payload-view").textContent = JSON.stringify(data.outcome.payload, null, 2);
-    }
-    renderCard(data.index, data.outcome);
+  const kinds = ["stage", "note", "retry", "progress", "asset_start", "asset_done"];
+  kinds.forEach((kind) => {
+    source.addEventListener(kind, (event) => handleEvent(kind, JSON.parse(event.data)));
   });
 
   source.addEventListener("error", (event) => {
-    if (event.data) {
-      const data = JSON.parse(event.data);
-      log(`error: ${data.message}`, "bad");
-    }
+    // EventSource also fires "error" for transport hiccups, which carry no data.
+    if (event.data) handleEvent("error", JSON.parse(event.data));
   });
 
   source.addEventListener("done", (event) => {
-    const data = JSON.parse(event.data || "{}");
     source.close();
     state.eventSource = null;
-    setBusy(false);
-    if (data.error) {
-      const box = $("#form-error");
-      box.textContent = data.error;
-      box.hidden = false;
-      log(`batch halted: ${data.error}`, "bad");
-      state.cards.forEach((card) => {
-        if (card.classList.contains("pending")) card.remove();
-      });
-      if (!$("#gallery").children.length) $("#gallery").innerHTML = emptyState();
-    }
-    renderSummary(data);
-    refreshLibraryChip();
+    handleEvent("done", JSON.parse(event.data || "{}"));
   });
+}
+
+/** Serverless transport: one request runs the batch, then the log is replayed. */
+async function generateSync(payload) {
+  let data;
+  try {
+    const response = await fetch("/api/generate/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(`server responded ${response.status}`);
+    data = await response.json();
+  } catch (error) {
+    log(`dispatch failed: ${error}`, "bad");
+    showFormError(`The generation request failed: ${error}`);
+    setBusy(false);
+    return;
+  }
+
+  for (const event of data.events || []) {
+    handleEvent(event.kind, event.data);
+    // A short beat between stages so the pipeline still reads as a sequence.
+    if (event.kind === "stage") await sleep(70);
+  }
+  handleEvent("done", data.result || {});
 }
 
 function setBusy(busy) {
@@ -397,17 +697,29 @@ function metric(label, value, tone = "") {
   return `<span class="metric ${tone}">${label} <b>${value}</b></span>`;
 }
 
+/** What the browser can render without asking the server again. The small
+    inline preview is always present; the full-res copy is only inlined while
+    the response body has room, so /assets/<file> is the fallback for it. */
+function thumbSource(outcome) {
+  return outcome.preview_url || outcome.data_url || outcome.url || "";
+}
+
+function fullSource(outcome) {
+  return outcome.data_url || outcome.url || outcome.preview_url || "";
+}
+
 function renderCard(index, outcome) {
   const card = state.cards.get(index) || createCard(index);
   card.classList.remove("pending");
 
   const status = outcome.status;
+  const src = thumbSource(outcome);
   const frame = document.createElement("div");
   frame.className = "card-frame";
 
-  if (outcome.url) {
+  if (src) {
     const img = document.createElement("img");
-    img.src = outcome.url;
+    img.src = src;
     img.alt = `Generated asset ${index + 1}`;
     img.loading = "lazy";
     img.addEventListener("click", () => openInspector(outcome));
@@ -452,14 +764,27 @@ function renderCard(index, outcome) {
     error.className = "card-error";
     error.textContent = `${outcome.error_code}: ${outcome.error}`;
     body.appendChild(error);
+
+    if (outcome.needs_key) {
+      const fix = document.createElement("button");
+      fix.type = "button";
+      fix.className = "kv-btn";
+      fix.textContent = "Add key";
+      fix.addEventListener("click", () => openVault(outcome.needs_key));
+      body.appendChild(fix);
+    }
   }
 
-  if (outcome.url) {
+  if (src) {
     const actions = document.createElement("div");
     actions.className = "card-actions";
+    // data: URLs are self-contained - download/open work with no server round
+    // trip, which matters on serverless deploys where disk storage is ephemeral.
+    const full = fullSource(outcome);
+    const downloadHref = outcome.data_url || (outcome.url ? `${outcome.url}/download` : full);
     actions.innerHTML = `
-      <a href="${outcome.url}/download" download>Download</a>
-      <a href="${outcome.url}" target="_blank" rel="noopener">Full res</a>`;
+      <a href="${downloadHref}" download="${outcome.filename || "asset.jpg"}">Download</a>
+      <a href="${full}" target="_blank" rel="noopener">Full res</a>`;
     const details = document.createElement("button");
     details.type = "button";
     details.textContent = "Details";
@@ -492,8 +817,12 @@ function renderSummary(batch) {
 
 function openInspector(outcome) {
   const image = $("#inspector-image");
-  image.src = outcome.url || "";
+  image.src = fullSource(outcome);
   image.alt = "Generated asset";
+  // The full-res copy may only exist on a server instance that is already gone.
+  image.onerror = () => {
+    if (outcome.preview_url && image.src !== outcome.preview_url) image.src = outcome.preview_url;
+  };
 
   const q = outcome.qa || {};
   const i = outcome.integrity || {};
@@ -554,27 +883,209 @@ function closeInspector() {
   $("#inspector-image").src = "";
 }
 
+/* -------------------------------------------------------------- key vault */
+
+function renderVault(focusEngine = "") {
+  const host = $("#kv-rows");
+  const wasFocused = $("#keyvault").contains(document.activeElement);
+  const stored = loadKeys();
+  host.innerHTML = "";
+
+  state.config.providers
+    .filter((provider) => provider.needs_key)
+    .forEach((provider) => {
+      const saved = stored[provider.name] || "";
+      const row = document.createElement("div");
+      row.className = `kv-row${saved ? " saved" : ""}`;
+      row.dataset.engine = provider.name;
+
+      row.innerHTML = `
+        <div class="kv-head">
+          <span class="kv-name">${escapeHtml(provider.label)}</span>
+          <span class="kv-env">${escapeHtml(provider.env_key)}</span>
+        </div>
+        <div class="kv-input-row">
+          <input type="password" autocomplete="off" spellcheck="false"
+                 placeholder="${saved ? escapeHtml(maskKey(saved)) : escapeHtml(provider.key_hint || "paste your key")}" />
+          <button type="button" class="kv-btn" data-act="reveal" aria-label="Show key">👁</button>
+        </div>
+        <div class="kv-actions">
+          <button type="button" class="kv-btn primary-btn" data-act="save">Save</button>
+          <button type="button" class="kv-btn" data-act="test">Test</button>
+          <button type="button" class="kv-btn danger" data-act="remove" ${saved ? "" : "disabled"}>Remove</button>
+          ${provider.key_url ? `<a class="kv-get" href="${provider.key_url}" target="_blank" rel="noopener">Get a key ↗</a>` : ""}
+        </div>
+        <div class="kv-status">${saved
+          ? `Saved in this browser as ${escapeHtml(maskKey(saved))}.`
+          : (provider.key_source === "env" ? "A key is configured on the server." : "No key saved.")}</div>`;
+
+      const input = row.querySelector("input");
+      const status = row.querySelector(".kv-status");
+
+      const setStatus = (text, tone = "") => {
+        status.textContent = text;
+        status.className = `kv-status ${tone}`;
+      };
+
+      row.querySelector('[data-act="reveal"]').addEventListener("click", () => {
+        input.type = input.type === "password" ? "text" : "password";
+      });
+
+      row.querySelector('[data-act="save"]').addEventListener("click", async () => {
+        const value = input.value.trim();
+        if (!value) {
+          setStatus("Paste a key into the field first.", "bad");
+          return;
+        }
+        saveKey(provider.name, value);
+        input.value = "";
+        setStatus(`Saved in this browser as ${maskKey(value)}. Nothing was sent to the server.`, "ok");
+        await refreshEngines();
+        renderVault(provider.name);
+      });
+
+      row.querySelector('[data-act="test"]').addEventListener("click", async () => {
+        const value = input.value.trim() || stored[provider.name] || "";
+        if (!value) {
+          setStatus("Nothing to test - save a key or paste one above.", "bad");
+          return;
+        }
+        setStatus("Checking the key with the engine…", "busy");
+        try {
+          const response = await fetch("/api/keys/validate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ engine: provider.name, key: value }),
+          });
+          const verdict = await response.json();
+          const detail = verdict.detail ? ` ${verdict.detail}` : "";
+          setStatus(`${verdict.message}${detail}`, verdict.ok ? "ok" : "bad");
+        } catch (error) {
+          setStatus(`Could not reach the studio server: ${error}`, "bad");
+        }
+      });
+
+      row.querySelector('[data-act="remove"]').addEventListener("click", async () => {
+        removeKey(provider.name);
+        await refreshEngines();
+        renderVault(provider.name);
+      });
+
+      host.appendChild(row);
+    });
+
+  // Focus only lands on a rendered element, so this must run after the dialog
+  // is visible - and re-rendering after Save must not steal focus away.
+  if (focusEngine && !$("#keyvault").hidden) {
+    const target = host.querySelector(`.kv-row[data-engine="${focusEngine}"]`);
+    if (target) {
+      target.scrollIntoView({ block: "nearest" });
+      if (wasFocused) target.querySelector("input").focus();
+    }
+  }
+}
+
+function openVault(focusEngine = "") {
+  $("#keyvault").hidden = false;
+  renderVault(focusEngine);
+  const target = focusEngine && $(`.kv-row[data-engine="${focusEngine}"] input`);
+  (target || $("#keyvault-close")).focus();
+  if (target) target.closest(".kv-row").scrollIntoView({ block: "nearest" });
+}
+
+function closeVault() {
+  $("#keyvault").hidden = true;
+  $("#open-vault").focus();
+}
+
+function wireVault() {
+  $("#open-vault").addEventListener("click", () => openVault());
+  $("#keyvault-close").addEventListener("click", closeVault);
+  $("#keyvault").addEventListener("click", (event) => {
+    if (event.target === $("#keyvault")) closeVault();
+  });
+}
+
 /* --------------------------------------------------------------- library */
+
+/** Assets generated in this tab, kept in memory. On a serverless deploy the
+    server's manifest is wiped whenever the instance goes cold, so without this
+    the Library tab would be empty seconds after a successful generation. */
+function rememberInSession(outcome) {
+  if (!outcome.filename) return;
+  const request = state.lastRequest || {};
+  const ratio = state.config.ratios.find((r) => r.ratio === request.aspect_ratio) || {};
+  state.sessionLibrary.unshift({
+    timestamp: new Date().toISOString().slice(0, 19) + "+00:00",
+    status: outcome.status,
+    provider: state.provider === "auto" ? state.config.active_provider : state.provider,
+    prompt: request.prompt || "",
+    style: request.style || "none",
+    width: ratio.width || outcome.integrity.width,
+    height: ratio.height || outcome.integrity.height,
+    seed: outcome.seed,
+    filename: outcome.filename,
+    qa_aesthetic: outcome.qa ? outcome.qa.aesthetic : null,
+    error_code: outcome.error_code,
+    preview_url: outcome.preview_url,
+    data_url: outcome.data_url,
+    session: true,
+  });
+}
+
+function mergeLibrary(serverEntries) {
+  const seen = new Set();
+  const merged = [];
+  [...state.sessionLibrary, ...serverEntries].forEach((entry) => {
+    const id = entry.filename || `${entry.timestamp}|${entry.seed}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    merged.push(entry);
+  });
+  return merged;
+}
 
 async function loadLibrary() {
   const host = $("#library");
   host.innerHTML = `<p class="muted">Reading manifest…</p>`;
-  const response = await fetch("/api/history");
-  const data = await response.json();
+
+  let data = { entries: [], library: state.config.library };
+  try {
+    const response = await fetch("/api/history");
+    data = await response.json();
+  } catch {
+    /* fall back to the session list alone */
+  }
   updateLibraryChip(data.library);
 
-  if (!data.entries.length) {
-    host.innerHTML = `<p class="muted">The manifest is empty. Generated assets are recorded in assets/manifest.jsonl.</p>`;
+  const entries = mergeLibrary(data.entries || []);
+  host.innerHTML = "";
+
+  if (data.library && data.library.ephemeral) {
+    const banner = document.createElement("div");
+    banner.className = "lib-banner";
+    banner.innerHTML =
+      `<strong>Ephemeral storage.</strong> ${escapeHtml(data.library.note || "")} ` +
+      `Anything below with a dashed border is held in this browser tab only. ` +
+      `Download what you want to keep.`;
+    host.appendChild(banner);
+  }
+
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "Nothing generated yet. Assets and their provenance are recorded in manifest.jsonl.";
+    host.appendChild(empty);
     return;
   }
 
-  host.innerHTML = "";
-  data.entries.forEach((entry) => {
+  entries.forEach((entry) => {
     const row = document.createElement("div");
-    row.className = "lib-row";
+    row.className = `lib-row${entry.session ? " session" : ""}`;
 
-    const thumb = entry.filename
-      ? `<img src="/assets/${entry.filename}" alt="" loading="lazy" />`
+    const src = entry.preview_url || entry.data_url || (entry.filename ? `/assets/${entry.filename}` : "");
+    const thumb = src
+      ? `<img src="${src}" alt="" loading="lazy" />`
       : `<div class="lib-thumb-missing">✕</div>`;
 
     const score = entry.qa_aesthetic !== null && entry.qa_aesthetic !== undefined
@@ -589,10 +1100,20 @@ async function loadLibrary() {
       </div>
       <div class="lib-score">${escapeHtml(String(score))}<br /><span class="muted">${entry.status}</span></div>`;
 
-    if (entry.filename) {
-      row.querySelector("img").addEventListener("click", () =>
-        window.open(`/assets/${entry.filename}`, "_blank", "noopener")
-      );
+    const img = row.querySelector("img");
+    if (img) {
+      // A cold instance never wrote this file - drop the thumb instead of
+      // leaving a broken-image glyph in the row.
+      img.addEventListener("error", () => {
+        img.replaceWith(Object.assign(document.createElement("div"), {
+          className: "lib-thumb-missing",
+          textContent: "✕",
+        }));
+      });
+      img.addEventListener("click", () => {
+        const target = entry.data_url || entry.preview_url || `/assets/${entry.filename}`;
+        window.open(target, "_blank", "noopener");
+      });
     }
     host.appendChild(row);
   });

@@ -29,6 +29,13 @@ class HuggingFaceProvider(Provider):
     supports_seed = True
     free = True
     notes = "Free token from huggingface.co/settings/tokens. Returns raw image bytes."
+    key_url = "https://huggingface.co/settings/tokens"
+    key_hint = "hf_..."
+    verify_url = "https://huggingface.co/api/whoami-v2"
+
+    def verify_summary(self, payload: Any) -> str:
+        name = (payload or {}).get("name")
+        return f"Signed in as {name}." if name else ""
 
     def _model(self) -> str:
         return str(self.options.get("model") or DEFAULT_MODEL)
@@ -58,7 +65,10 @@ class HuggingFaceProvider(Provider):
         on_event: Callable[[str, dict], None] | None = None,
     ) -> ProviderResult:
         if not self.api_key:
-            raise ProviderError("HF_TOKEN is not set.", code="missing_key")
+            raise ProviderError(
+                "Hugging Face needs an access token. Add one under Engine -> Manage keys.",
+                code="missing_key",
+            )
 
         payload = self.build_payload(request, prompt, negative, seed)
         response, trace = request_with_retry(
@@ -75,6 +85,7 @@ class HuggingFaceProvider(Provider):
             max_retries=request.max_retries,
             stream=True,
             on_event=on_event,
+            deadline=request.deadline,
         )
 
         content_type = response.headers.get("Content-Type", "")
@@ -90,11 +101,7 @@ class HuggingFaceProvider(Provider):
                 message = json.loads(text).get("error", message)
             except Exception:
                 pass
-            raise ProviderError(
-                f"Engine returned {response.status_code}: {message}",
-                code="unexpected_response",
-                status=response.status_code,
-            )
+            raise self._auth_error(response.status_code, message)
 
         return ProviderResult(
             stream=response,

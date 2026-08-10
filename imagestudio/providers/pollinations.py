@@ -85,6 +85,7 @@ class PollinationsProvider(Provider):
             max_retries=request.max_retries,
             stream=True,
             on_event=on_event,
+            deadline=request.deadline,
         )
 
         content_type = response.headers.get("Content-Type", "")

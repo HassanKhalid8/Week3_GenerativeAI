@@ -73,11 +73,22 @@
       </label>
     </div>
 
-    <label class="field">
-      <span class="label-row"><span>Engine</span></span>
-      <select id="provider"></select>
+    <div class="field">
+      <span class="label-row">
+        <span>Engine</span>
+        <button type="button" id="open-vault" class="link-btn">Manage keys</button>
+      </span>
+      <div class="combo" id="provider-combo">
+        <button type="button" id="provider-trigger" class="combo-trigger"
+                role="combobox" aria-expanded="false" aria-haspopup="listbox"
+                aria-controls="provider-list" aria-label="Generation engine">
+          <span class="combo-value" id="provider-value">Auto</span>
+        </button>
+        <ul class="combo-list" id="provider-list" role="listbox"
+            aria-label="Generation engine" tabindex="-1" hidden></ul>
+      </div>
       <small id="provider-note" class="muted"></small>
-    </label>
+    </div>
 
     <details class="advanced">
       <summary>Transport &amp; QA policy</summary>
@@ -157,6 +168,27 @@
     </div>
   </section>
 </main>
+
+<!-- API key vault -->
+<div id="keyvault" class="inspector" hidden>
+  <div class="inspector-panel kv-panel" role="dialog" aria-modal="true" aria-labelledby="kv-title">
+    <button id="keyvault-close" class="icon-btn close" aria-label="Close">&times;</button>
+    <h3 class="panel-title" id="kv-title">[ API Key Vault ]</h3>
+
+    <div class="kv-privacy">
+      <p class="kv-privacy-head">Your keys stay yours</p>
+      <ul>
+        <li>Saved in <strong>this browser only</strong> (localStorage). Nothing is written to the server.</li>
+        <li>Sent to this app's own server over HTTPS <strong>only in the request that uses it</strong>, then dropped &mdash; never cached, never logged, never in <code>manifest.jsonl</code>.</li>
+        <li>Every message the server sends back is scrubbed, so a key can't leak through an engine's error text.</li>
+        <li>Nothing is ever sent to any third party except the engine the key belongs to.</li>
+        <li><strong>Remove</strong> erases it from this browser immediately.</li>
+      </ul>
+    </div>
+
+    <div id="kv-rows" class="kv-rows"></div>
+  </div>
+</div>
 
 <!-- asset inspector -->
 <div id="inspector" class="inspector" hidden>

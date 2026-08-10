@@ -95,12 +95,18 @@ def request_with_retry(
     stream: bool = True,
     on_event: Callable[[str, dict], None] | None = None,
     retry_status: Iterable[int] = RETRY_STATUS,
+    deadline: float | None = None,
     **kwargs: Any,
 ) -> tuple[requests.Response, TransportTrace]:
     """Issue a request behind the split-timeout + backoff shield.
 
     Returns the live (unconsumed, when stream=True) response so the caller can
     pipe it to disk in chunks.
+
+    `deadline` is a `time.monotonic()` stamp past which retrying is pointless -
+    a serverless host will kill the function before the backoff finishes, so an
+    exhausted quota (HTTP 429 is retryable) must surface as an error the user
+    can read rather than as a gateway timeout.
     """
     trace = TransportTrace()
     started_all = time.perf_counter()
@@ -135,8 +141,9 @@ def request_with_retry(
                 "The GPU cluster is likely saturated.",
                 code="ReadTimeout",
             )
-            _record_retry(trace, attempt, max_retries, "ReadTimeout", elapsed, None, on_event)
-            if attempt >= max_retries:
+            if not _record_retry(
+                trace, attempt, max_retries, "ReadTimeout", elapsed, None, on_event, deadline=deadline
+            ):
                 break
             continue
         except requests.exceptions.SSLError as exc:
@@ -144,8 +151,9 @@ def request_with_retry(
         except requests.exceptions.ConnectionError as exc:
             elapsed = int((time.perf_counter() - started) * 1000)
             last_error = TransportError(f"Connection dropped: {exc}", code="ConnectionError")
-            _record_retry(trace, attempt, max_retries, "ConnectionError", elapsed, None, on_event)
-            if attempt >= max_retries:
+            if not _record_retry(
+                trace, attempt, max_retries, "ConnectionError", elapsed, None, on_event, deadline=deadline
+            ):
                 break
             continue
 
@@ -161,11 +169,10 @@ def request_with_retry(
                 code=f"HTTP_{response.status_code}",
                 status=response.status_code,
             )
-            _record_retry(
+            if not _record_retry(
                 trace, attempt, max_retries, f"HTTP {response.status_code}",
-                elapsed, response.status_code, on_event, forced_sleep=hint,
-            )
-            if attempt >= max_retries:
+                elapsed, response.status_code, on_event, forced_sleep=hint, deadline=deadline,
+            ):
                 break
             continue
 
@@ -188,11 +195,22 @@ def _record_retry(
     status: int | None,
     on_event: Callable[[str, dict], None] | None,
     forced_sleep: float | None = None,
-) -> None:
+    deadline: float | None = None,
+) -> bool:
+    """Log the attempt and sleep. Returns False when the caller should give up."""
     if attempt >= max_retries:
         trace.attempts.append(Attempt(attempt + 1, "failed", detail, elapsed_ms, status))
-        return
+        return False
+
     delay = forced_sleep if forced_sleep is not None else backoff_delay(attempt)
+    if deadline is not None and time.monotonic() + delay >= deadline:
+        # Sleeping would outlive the request budget - report the real error now
+        # instead of letting the host time the whole function out.
+        trace.attempts.append(
+            Attempt(attempt + 1, "failed", f"{detail} (no time left to retry)", elapsed_ms, status)
+        )
+        return False
+
     trace.attempts.append(
         Attempt(attempt + 1, "retrying", detail, elapsed_ms, status, int(delay * 1000))
     )
@@ -202,6 +220,7 @@ def _record_retry(
             {"attempt": attempt + 1, "detail": detail, "sleep_ms": int(delay * 1000)},
         )
     time.sleep(delay)
+    return True
 
 
 def _peek(response: requests.Response, limit: int = 400) -> str:
@@ -231,6 +250,25 @@ class StreamResult:
         }
 
 
+def _open_for_write(destination: Path):
+    """Open the sink, translating a hostile filesystem into a pipeline error.
+
+    Serverless bundles (Vercel, Lambda) are mounted read-only, so this raises
+    OSError - and a bare OSError is not something the pipeline catches, which
+    would take down the whole batch instead of one asset. Re-raising it as a
+    TransportError keeps the failure inside Stage 4 where it belongs.
+    """
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        return open(destination, "wb")
+    except OSError as exc:
+        raise TransportError(
+            f"Cannot write to {destination.parent} ({exc.strerror or exc}). "
+            "The filesystem is read-only; set IMAGESTUDIO_ASSETS to a writable path.",
+            code="storage_unwritable",
+        ) from exc
+
+
 def stream_to_file(
     response: requests.Response,
     destination: Path,
@@ -239,12 +277,11 @@ def stream_to_file(
     on_progress: Callable[[int], None] | None = None,
 ) -> StreamResult:
     """Pipe a live response body straight to disk, never holding it all in RAM."""
-    destination.parent.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
     written = 0
     chunks = 0
     try:
-        with open(destination, "wb") as handle:
+        with _open_for_write(destination) as handle:
             for chunk in response.iter_content(chunk_size=chunk_size):
                 if not chunk:      # keep-alive filler, not payload
                     continue
@@ -260,7 +297,10 @@ def stream_to_file(
                 if on_progress:
                     on_progress(written)
     except TransportError:
-        destination.unlink(missing_ok=True)
+        try:
+            destination.unlink(missing_ok=True)   # a read-only sink cannot be cleaned up either
+        except OSError:
+            pass
         raise
     except requests.exceptions.ChunkedEncodingError as exc:
         # The connection died mid-download - exactly the truncated-stream case
@@ -282,10 +322,9 @@ def stream_to_file(
 
 def write_bytes(data: bytes, destination: Path, chunk_size: int = CHUNK_SIZE) -> StreamResult:
     """Same disk-writing contract for engines that hand back base64 instead of a stream."""
-    destination.parent.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
     chunks = 0
-    with open(destination, "wb") as handle:
+    with _open_for_write(destination) as handle:
         for offset in range(0, len(data), chunk_size):
             handle.write(data[offset:offset + chunk_size])
             chunks += 1

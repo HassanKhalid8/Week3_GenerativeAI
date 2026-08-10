@@ -7,7 +7,9 @@ six-stage pipeline is exercised without a key, a quota or a network.
 from __future__ import annotations
 
 import io
+import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -17,10 +19,20 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from imagestudio import integrity, moderation, qa, storage, styles, transport  # noqa: E402
+from imagestudio import integrity, moderation, qa, redact, storage, styles, transport  # noqa: E402
 from imagestudio.engine import Studio  # noqa: E402
 from imagestudio.params import ASPECT_RATIOS, GenerationRequest, ParameterError  # noqa: E402
-from imagestudio.providers import build, resolve  # noqa: E402
+from imagestudio.providers import build, catalogue, resolve  # noqa: E402
+from imagestudio.providers.base import classify_auth_error  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _isolated_assets(tmp_path, monkeypatch):
+    """Every test writes into its own directory, and none inherits a cached root."""
+    monkeypatch.setenv("IMAGESTUDIO_ASSETS", str(tmp_path))
+    storage.reset_root_cache()
+    yield
+    storage.reset_root_cache()
 
 
 # ---------------------------------------------------------------- Stage 1
@@ -237,6 +249,9 @@ def test_offline_pipeline_runs_all_six_stages(tmp_path, monkeypatch):
         assert asset.integrity["width"] == 1344 and asset.integrity["height"] == 768
         assert asset.stream["bytes_written"] > 0
         assert (tmp_path / asset.filename).exists()
+        # The browser must be able to render/download the asset without a second
+        # disk read - required on serverless deploys where /tmp is ephemeral.
+        assert asset.data_url.startswith("data:image/png;base64,")
 
     stages_seen = {data["stage"] for kind, data in events if kind == "stage"}
     assert {"payload", "gate1", "network", "transport", "integrity", "gate2", "qa"} <= stages_seen
@@ -244,6 +259,23 @@ def test_offline_pipeline_runs_all_six_stages(tmp_path, monkeypatch):
     entries = storage.read_manifest()
     assert len(entries) == 2
     assert entries[0]["sha256"]
+
+
+def test_data_url_is_cleared_when_qa_discards_the_asset(tmp_path, monkeypatch):
+    monkeypatch.setenv("IMAGESTUDIO_ASSETS", str(tmp_path))
+    request = GenerationRequest(
+        prompt="a flat grey square",
+        provider="mock",
+        qa_threshold=10.0,   # nothing clears this bar - forces a flagged result
+        qa_discard=True,
+    )
+    result = Studio(provider=build("mock")).generate(request)
+    asset = result.assets[0]
+    assert asset.status == "rejected"
+    assert asset.error_code == "qa_below_threshold"
+    assert asset.data_url == ""
+    assert asset.url == ""
+    assert not list(tmp_path.glob("*.png"))
 
 
 def test_blocked_prompt_never_reaches_the_engine(tmp_path, monkeypatch):
@@ -257,3 +289,230 @@ def test_blocked_prompt_never_reaches_the_engine(tmp_path, monkeypatch):
 def test_auto_resolution_always_yields_a_usable_engine():
     provider = resolve("auto")
     assert provider.available
+
+
+# ------------------------------------------------------- read-only deploys
+
+def test_stream_sink_reports_an_unwritable_path_as_a_transport_error(tmp_path):
+    """The Vercel crash, reproduced.
+
+    A read-only bundle makes open() raise OSError, which Studio._one does not
+    catch - one bad write took down the whole batch. Stage 4 must translate it.
+    """
+    blocker = tmp_path / "not-a-directory.txt"
+    blocker.write_text("this is a file, so nothing can be created underneath it")
+
+    with pytest.raises(transport.TransportError) as caught:
+        transport.write_bytes(b"\x89PNG", blocker / "sub" / "asset.png")
+    assert caught.value.code == "storage_unwritable"
+
+
+def test_assets_root_falls_back_when_the_candidate_cannot_be_written(monkeypatch):
+    monkeypatch.setattr(storage, "_is_writable", lambda path: False)
+    storage.reset_root_cache()
+
+    root = storage.assets_root()
+    assert root == storage._fallback_root()
+    assert storage.is_ephemeral()
+    assert storage.library_stats()["ephemeral"] is True
+    assert storage.library_stats()["note"]
+
+
+def test_manifest_failure_never_costs_an_asset(monkeypatch):
+    """A read-only manifest is a bookkeeping problem, not a generation failure."""
+    def explode(*args, **kwargs):
+        raise OSError(30, "Read-only file system")
+
+    monkeypatch.setattr("builtins.open", explode)
+    assert storage.record({"status": "accepted"}) is False
+
+
+def test_batch_survives_a_read_only_asset_directory(tmp_path, monkeypatch):
+    """End to end: the engine still runs, the failure is scoped to one asset."""
+    monkeypatch.setattr(
+        transport,
+        "_open_for_write",
+        lambda destination: (_ for _ in ()).throw(
+            transport.TransportError("read-only", code="storage_unwritable")
+        ),
+    )
+    result = Studio(provider=build("mock")).generate(
+        GenerationRequest(prompt="a brass orrery", provider="mock", count=2)
+    )
+    assert result.error == ""                      # the batch itself completed
+    assert [a.status for a in result.assets] == ["failed", "failed"]
+    assert {a.error_code for a in result.assets} == {"storage_unwritable"}
+
+
+# ------------------------------------------------------ bring-your-own key
+
+def test_a_supplied_key_beats_the_environment(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "env-key-value")
+
+    assert build("gemini").api_key == "env-key-value"
+    assert build("gemini").key_source == "env"
+
+    provider = build("gemini", {"gemini": "user-key-value"})
+    assert provider.api_key == "user-key-value"
+    assert provider.key_source == "user"
+
+
+def test_a_supplied_key_unlocks_the_engine_in_the_catalogue(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    locked = {row["name"]: row for row in catalogue()}["openai"]
+    assert locked["available"] is False and locked["needs_key"] is True
+    assert locked["key_url"]                       # the vault can link somewhere
+
+    unlocked = {row["name"]: row for row in catalogue({"openai": "sk-test-key"})}["openai"]
+    assert unlocked["available"] is True
+    assert unlocked["key_source"] == "user"
+
+
+def test_a_key_never_reaches_the_serialized_request_or_the_manifest():
+    secret = "sk-do-not-leak-me-0000"
+    request = GenerationRequest(prompt="a tin robot", provider="mock", qa_threshold=0.0)
+    result = Studio(provider=build("mock"), keys={"openai": secret}).generate(request)
+
+    assert secret not in json.dumps(result.to_dict())
+    assert secret not in json.dumps(storage.read_manifest())
+
+
+def test_selecting_a_keyless_engine_asks_for_a_key_instead_of_crashing(monkeypatch):
+    monkeypatch.delenv("STABILITY_API_KEY", raising=False)
+    result = Studio().generate(GenerationRequest(prompt="a tin robot", provider="stability"))
+
+    assert result.error_code == "missing_key"
+    assert result.needs_key == "stability"
+    assert result.assets == []
+
+
+@pytest.mark.parametrize(
+    "status,body,expected",
+    [
+        (401, "", "invalid_api_key"),
+        (400, "API key not valid. Please pass a valid API key.", "invalid_api_key"),
+        (403, "", "key_forbidden"),
+        (402, "", "insufficient_credits"),
+        (429, "insufficient_credits for this month", "insufficient_credits"),
+        (429, "slow down", "rate_limited"),
+    ],
+)
+def test_credential_failures_are_classified_specifically(status, body, expected):
+    code, message = classify_auth_error(status, body, "Test Engine")
+    assert code == expected
+    assert "Test Engine" in message
+
+
+def test_a_moderation_refusal_is_not_mistaken_for_a_key_problem():
+    assert classify_auth_error(400, "content_policy_violation", "Test Engine") is None
+    assert classify_auth_error(500, "internal error", "Test Engine") is None
+
+
+# ---------------------------------------------------------------- scrubbing
+
+def test_scrub_removes_a_supplied_key_from_echoed_text():
+    secret = "sk-proj-abcdefghijklmnop1234"
+    leaked = f"Engine returned 401: bad Authorization header 'Bearer {secret}'"
+    cleaned = redact.scrub(leaked, [secret])
+    assert secret not in cleaned
+    assert "••••1234" in cleaned          # still identifies which key failed
+
+
+def test_scrub_catches_key_shapes_it_was_never_told_about():
+    for secret in ("sk-abcdefghijklmnopqrst", "hf_abcdefghijklmnopqrst", "AIzaSyAbcdefghijklmnopqrstuvw"):
+        assert secret not in redact.scrub(f"error: {secret} rejected")
+
+
+def test_scrub_leaves_a_sha256_digest_alone():
+    """The manifest is full of hex digests; masking them would destroy provenance."""
+    digest = "a" * 64
+    assert redact.scrub(f"sha256={digest}") == f"sha256={digest}"
+
+
+def test_scrub_deep_walks_nested_event_payloads():
+    secret = "sk-nested-secret-000000"
+    payload = {"assets": [{"error": f"rejected {secret}", "meta": {"seed": 7}}]}
+    cleaned = redact.scrub_deep(payload, [secret])
+    assert secret not in json.dumps(cleaned)
+    assert cleaned["assets"][0]["meta"]["seed"] == 7
+
+
+# ------------------------------------------------------------ retry budget
+
+def test_the_retry_shield_stops_when_the_time_budget_is_gone():
+    """A retryable 429 must not sleep past a serverless function's ceiling."""
+    trace = transport.TransportTrace()
+    keep_going = transport._record_retry(
+        trace, attempt=0, max_retries=3, detail="HTTP 429", elapsed_ms=10,
+        status=429, on_event=None, deadline=time.monotonic() + 0.001,
+    )
+    assert keep_going is False
+    assert trace.attempts[-1].outcome == "failed"
+    assert "no time left" in trace.attempts[-1].detail
+
+
+def test_an_unbudgeted_request_still_retries():
+    request = GenerationRequest(prompt="p").validate()
+    assert request.deadline is None
+
+    budgeted = GenerationRequest(prompt="p", budget_seconds=30).validate()
+    assert budgeted.deadline is not None
+
+
+# ----------------------------------------------------------- the web layer
+
+@pytest.fixture()
+def client():
+    from webapp.app import app as flask_app
+
+    flask_app.config.update(TESTING=True)
+    return flask_app.test_client()
+
+
+def test_sync_endpoint_returns_the_whole_event_log_and_the_result(client):
+    """The serverless transport: no SSE, no cross-request job registry."""
+    response = client.post("/api/generate/sync", json={
+        "prompt": "a brass orrery on a walnut desk",
+        "provider": "mock",
+        "qa_threshold": 0.0,
+    })
+    assert response.status_code == 200
+    body = response.get_json()
+
+    kinds = [event["kind"] for event in body["events"]]
+    assert "stage" in kinds and "asset_done" in kinds
+    stages = {e["data"]["stage"] for e in body["events"] if e["kind"] == "stage"}
+    assert {"payload", "gate1", "network", "transport", "integrity", "gate2", "qa"} <= stages
+
+    asset = body["result"]["assets"][0]
+    assert asset["status"] in ("accepted", "flagged")
+    assert asset["preview_url"].startswith("data:image/jpeg;base64,")
+
+
+def test_the_engine_catalogue_endpoint_applies_the_callers_keys(client, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    locked = client.post("/api/engines", json={}).get_json()["providers"]
+    assert not next(p for p in locked if p["name"] == "openai")["available"]
+
+    unlocked = client.post("/api/engines", json={"api_keys": {"openai": "sk-x"}}).get_json()["providers"]
+    assert next(p for p in unlocked if p["name"] == "openai")["available"]
+
+
+def test_an_unknown_engine_name_cannot_smuggle_a_key_through(client):
+    from webapp.app import _keys_from
+
+    assert _keys_from({"api_keys": {"not-an-engine": "sk-x", "openai": "sk-y"}}) == {"openai": "sk-y"}
+    assert _keys_from({"api_keys": {"openai": "x" * 5000}}) == {}
+    assert _keys_from({"api_keys": "not-a-dict"}) == {}
+
+
+def test_validating_a_keyless_engine_needs_no_network(client):
+    verdict = client.post("/api/keys/validate", json={"engine": "pollinations", "key": ""}).get_json()
+    assert verdict["ok"] is True and verdict["code"] == "no_key_required"
+
+
+def test_validating_an_empty_key_asks_for_one_instead_of_calling_out(client):
+    verdict = client.post("/api/keys/validate", json={"engine": "openai", "key": ""}).get_json()
+    assert verdict["ok"] is False and verdict["code"] == "missing_key"

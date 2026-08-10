@@ -29,6 +29,13 @@ class StabilityProvider(Provider):
     supports_seed = True
     free = False
     notes = "Paid credits (small free trial grant). Optimized for fast, high-quality v2beta iteration."
+    key_url = "https://platform.stability.ai/account/keys"
+    key_hint = "sk-..."
+    verify_url = "https://api.stability.ai/v1/user/balance"
+
+    def verify_summary(self, payload: Any) -> str:
+        credits = (payload or {}).get("credits")
+        return f"{credits:.2f} credits remaining." if isinstance(credits, (int, float)) else ""
 
     def _model(self) -> str:
         return str(self.options.get("model") or "core")
@@ -71,7 +78,10 @@ class StabilityProvider(Provider):
         on_event: Callable[[str, dict], None] | None = None,
     ) -> ProviderResult:
         if not self.api_key:
-            raise ProviderError("STABILITY_API_KEY is not set.", code="missing_key")
+            raise ProviderError(
+                "Stability AI needs an API key. Add one under Engine -> Manage keys.",
+                code="missing_key",
+            )
 
         payload = self.build_payload(request, prompt, negative, seed)
         # requests needs a files= mapping to emit multipart/form-data with no file part.
@@ -90,6 +100,7 @@ class StabilityProvider(Provider):
             max_retries=request.max_retries,
             stream=True,
             on_event=on_event,
+            deadline=request.deadline,
         )
 
         content_type = response.headers.get("Content-Type", "")
@@ -100,12 +111,13 @@ class StabilityProvider(Provider):
             finally:
                 response.close()
             text = body.decode("utf-8", "replace")
-            code = "moderation_blocked" if "content_moderation" in text or "flagged" in text else "unexpected_response"
-            raise ProviderError(
-                f"Engine returned {response.status_code}: {text[:250]}",
-                code=code,
-                status=response.status_code,
-            )
+            if "content_moderation" in text or "flagged" in text:
+                raise ProviderError(
+                    f"Engine returned {response.status_code}: {text[:250]}",
+                    code="moderation_blocked",
+                    status=response.status_code,
+                )
+            raise self._auth_error(response.status_code, text)
 
         return ProviderResult(
             stream=response,

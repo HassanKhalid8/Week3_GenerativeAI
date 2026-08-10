@@ -30,6 +30,16 @@ class GeminiProvider(Provider):
     supports_seed = False
     free = True
     notes = "Free-tier key from aistudio.google.com/app/apikey. Returns base64 inline image data."
+    key_url = "https://aistudio.google.com/app/apikey"
+    key_hint = "AIza..."
+    verify_url = "https://generativelanguage.googleapis.com/v1beta/models"
+
+    def verify_headers(self) -> dict[str, str]:
+        return {"x-goog-api-key": self.api_key}
+
+    def verify_summary(self, payload: Any) -> str:
+        models = (payload or {}).get("models") or []
+        return f"{len(models)} model(s) visible to this key." if models else ""
 
     def _model(self) -> str:
         return str(self.options.get("model") or DEFAULT_MODEL)
@@ -60,7 +70,9 @@ class GeminiProvider(Provider):
         on_event: Callable[[str, dict], None] | None = None,
     ) -> ProviderResult:
         if not self.api_key:
-            raise ProviderError("GEMINI_API_KEY is not set.", code="missing_key")
+            raise ProviderError(
+                "Gemini needs an API key. Add one under Engine -> Manage keys.", code="missing_key"
+            )
 
         payload = self.build_payload(request, prompt, negative, seed)
         response, trace = request_with_retry(
@@ -73,6 +85,7 @@ class GeminiProvider(Provider):
             max_retries=request.max_retries,
             stream=False,
             on_event=on_event,
+            deadline=request.deadline,
         )
 
         try:
@@ -84,11 +97,7 @@ class GeminiProvider(Provider):
 
         if response.status_code != 200:
             message = (envelope.get("error") or {}).get("message", "unknown error")
-            raise ProviderError(
-                f"Engine returned {response.status_code}: {message}",
-                code="unexpected_response",
-                status=response.status_code,
-            )
+            raise self._auth_error(response.status_code, message)
 
         candidates = envelope.get("candidates") or []
         if not candidates:

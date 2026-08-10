@@ -35,6 +35,35 @@ Every other engine is optional and only adds a row to the matrix:
 `IMAGESTUDIO_PROVIDER=auto` walks that list and picks the first engine that is
 actually usable, so adding a key is the only step needed to switch engines.
 
+### Bringing your own key, in the browser
+
+A key does not have to live on the server. **Engine → Manage keys** opens a vault
+where anyone using the studio can paste their own key, test it against the live
+engine before spending a generation, and unlock that engine instantly.
+
+The privacy model is deliberately simple, because "trust us" is not a design:
+
+* The key is stored in **that browser's `localStorage`** and nowhere else. The
+  server has no database, no session and no file it could write a key to.
+* It is sent to the studio's own backend **only in the request that uses it** —
+  and only the key for the engine actually selected. It is used and dropped
+  within that request; nothing is cached across requests.
+* Every string the server sends back passes through `imagestudio/redact.py`,
+  which masks both the exact keys it was handed and anything matching a known
+  key shape (`sk-…`, `hf_…`, `AIza…`). An engine that quotes your Authorization
+  header back inside an error body cannot leak it into the gateway log.
+* Nothing is written to `manifest.jsonl` — provenance records the engine, never
+  the credential.
+* **Remove** erases it from the browser immediately.
+
+Wrong keys fail usefully rather than generically. `classify_auth_error` in
+`providers/base.py` separates *invalid key* (401, or a body saying so) from
+*forbidden* (403), *out of credit* (402), and *rate limited* (429), and a
+credential failure is routed to the network stage rather than through Gate 2 —
+telling someone to rephrase their prompt when their key expired would be
+actively misleading. The failing card offers an **Add key** button that opens the
+vault on the right row.
+
 ---
 
 ## Quick start
@@ -223,6 +252,64 @@ Generation runs on a worker thread; the browser consumes stage events over SSE,
 so a 45-second denoise on a free GPU queue shows real progress instead of a
 spinner.
 
+The engine picker is a hand-built ARIA combobox rather than a `<select>`. A
+native listbox renders in the OS's own style and can only hold a line of text
+per row; this one carries the engine's badge (`free` / `paid` / `key saved` /
+`needs key`), its notes and its prompt ceiling, is fully keyboard-driven
+(arrows, Home/End, typeahead, Escape), and turns a locked engine into an
+invitation — clicking one opens the key vault on that engine instead of doing
+nothing.
+
+---
+
+## Deploying to Vercel
+
+```bash
+vercel deploy
+```
+
+`vercel.json` and `api/index.py` are already in the repo; `requirements.txt` is
+picked up automatically. No environment variables are required — the deployed
+studio runs on Pollinations, and visitors supply their own keys for anything
+else through the key vault.
+
+Two things about a serverless host change how the studio behaves, and both are
+handled rather than hidden:
+
+**The filesystem is read-only.** The deploy bundle is mounted at `/var/task`, so
+Stage 4's `open(destination, "wb")` fails with `[Errno 30]`. `assets_root()` now
+*probes* each candidate with a real write before accepting it and falls back to
+a temp directory, and a sink that still cannot be opened raises a
+`TransportError` rather than a bare `OSError` — so one failed write costs one
+asset instead of the whole batch. Set `IMAGESTUDIO_ASSETS` to mounted storage to
+get a durable library; otherwise the Library tab shows an honest
+*ephemeral storage* banner and lists what this browser tab generated, held in
+memory. Every asset is also returned inline as a data URI, so the gallery never
+depends on a second request finding the file on the same instance.
+
+**Each request is its own process.** The POST that starts a job and the GET that
+reads its event stream can land on different instances, which makes SSE and the
+in-memory job registry unusable. When `VERCEL` is set, `/api/config` reports
+`streaming: false` and the browser calls `POST /api/generate/sync`, which runs
+the batch inside one request and returns the collected event log for the client
+to replay through the same handlers. The pipeline still animates; it just
+animates after the fact. Batch size drops to 2 so the inlined images fit
+Vercel's 4.5 MB response cap, and `IMAGESTUDIO_BUDGET_SECONDS` (52 by default)
+stops the retry shield from backing off past the 60 s function ceiling — a
+throttled engine reports a readable error instead of a gateway timeout.
+
+### Endpoints
+
+| Route | Purpose |
+|---|---|
+| `GET /api/config` | ratios, styles, engines, stages, transport profile |
+| `POST /api/engines` | re-read engine availability with the caller's keys applied |
+| `POST /api/keys/validate` | probe one key against its engine without generating |
+| `POST /api/generate` → `GET /api/jobs/<id>/events` | streaming transport (local) |
+| `POST /api/generate/sync` | single-request transport (serverless) |
+| `GET /api/history` | manifest entries plus library stats |
+| `GET /assets/<file>[/download]` | stored asset, 404 if this instance never wrote it |
+
 ---
 
 ## The download pipeline
@@ -256,6 +343,8 @@ pipeline reports what actually arrived.
 multimodal-image-generation-studio/
 ├── app.py                  # entrypoint: python app.py
 ├── run.py                  # CLI pipeline
+├── api/index.py            # Vercel entrypoint (same WSGI app)
+├── vercel.json             # maxDuration 60s, everything rewritten to the function
 ├── requirements.txt
 ├── .env.example            # every key optional
 ├── imagestudio/
@@ -265,14 +354,15 @@ multimodal-image-generation-studio/
 │   ├── moderation.py       # Stage 3 - dual security gates
 │   ├── integrity.py        # Stage 5 - forced pixel decode
 │   ├── qa.py               # Stage 6 - aesthetic + semantic alignment
-│   ├── storage.py          # asset library and manifest
+│   ├── storage.py          # asset library, manifest, writable-root probing
+│   ├── redact.py           # scrubs API keys out of anything sent to the browser
 │   ├── engine.py           # the orchestrator
 │   └── providers/          # pollinations, gemini, huggingface, stability, openai, mock
 ├── webapp/
-│   ├── app.py              # Flask + SSE
+│   ├── app.py              # Flask; SSE locally, single-request on serverless
 │   ├── templates/index.html
 │   └── static/{app.css, app.js}
-├── tests/test_pipeline.py  # 27 offline tests
+├── tests/test_pipeline.py  # 54 offline tests
 └── assets/                 # generated artwork + manifest.jsonl
 ```
 
@@ -285,4 +375,5 @@ binary stream, base64 JSON, multipart form, URL redirect) · exact design
 parameter payloads · handling image URLs and binary streams · split-timeout
 network policy · exponential backoff with jitter · moderation gate handling ·
 memory-safe chunked I/O · binary integrity verification · automated quality
-assurance.
+assurance · serverless deployment under a read-only filesystem · per-request
+credential handling with output redaction · hand-built accessible ARIA widgets.

@@ -1,0 +1,13 @@
+# Generated assets never belong in the deploy bundle - the bundle is read-only,
+# so shipping them only makes /var/task/assets look writable when it is not.
+assets/*
+!assets/.gitkeep
+
+tests
+docs
+.pytest_cache
+__pycache__
+*.pyc
+.env
+venv
+.venv
