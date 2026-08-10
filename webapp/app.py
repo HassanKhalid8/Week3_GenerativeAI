@@ -171,7 +171,41 @@ def _run_job(job_id: str, payload: dict) -> None:
 
 @app.get("/")
 def index():
+    page = Path(app.root_path) / app.template_folder / "index.html"
+    if not page.is_file():
+        # A deploy that did not bundle the templates would otherwise answer the
+        # generic 404 page, which says nothing about what is actually missing.
+        return (
+            jsonify({
+                "error": "index.html was not bundled with this deployment.",
+                "expected": str(page),
+                "hint": "Check includeFiles in vercel.json and .vercelignore.",
+            }),
+            500,
+        )
     return send_from_directory(app.template_folder, "index.html")
+
+
+@app.get("/api/health")
+def health():
+    """Cheap liveness and routing probe.
+
+    The catch-all rewrite means a misrouted deploy answers 404 for every page
+    with no clue why; hitting this shows the path Flask actually received.
+    """
+    root = Path(app.root_path)
+    return jsonify(
+        {
+            "ok": True,
+            "serverless": SERVERLESS,
+            "streaming": not SERVERLESS,
+            "path_seen_by_flask": request.path,
+            "template_bundled": (root / app.template_folder / "index.html").is_file(),
+            "static_bundled": (root / app.static_folder / "app.js").is_file(),
+            "assets_root": str(assets_root()),
+            "assets_ephemeral": library_stats()["ephemeral"],
+        }
+    )
 
 
 @app.get("/api/config")

@@ -273,6 +273,19 @@ picked up automatically. No environment variables are required — the deployed
 studio runs on Pollinations, and visitors supply their own keys for anything
 else through the key vault.
 
+`GET /api/health` reports the path Flask actually received, whether the
+templates and static files made it into the bundle, and where assets are being
+written — one request tells you whether a bad deploy is a routing problem or a
+bundling problem.
+
+**A note on the catch-all rewrite.** Everything is rewritten to the single
+function at `api/index.py`. Vercel used to hand that function the *original*
+request path, but now routes internal rewrites using the rewritten destination,
+so Flask would be asked for `/api/index` and return 404 for the entire site. The
+rewrite therefore carries the path through (`/:path*` → `/api/index/:path*`) and
+a small WSGI wrapper in `api/index.py` strips the function's own mount prefix
+before Flask sees it. The app is correct whichever way the platform routes.
+
 Two things about a serverless host change how the studio behaves, and both are
 handled rather than hidden:
 
