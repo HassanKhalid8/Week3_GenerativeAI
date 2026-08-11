@@ -292,11 +292,20 @@ opinion about. Both prefixes are registered (`_mirror_api_namespace()`), so
 *The path.* Vercel's filesystem routing binds `api/index.py` to exactly one URL,
 `/api/index`. Rewriting to `/api/index/<path>` 404s every URL but `/`, because
 no function is mounted at those sub-paths; rewriting to a bare `/api/index` does
-reach the function, but the internal rewrite is routed using the *rewritten*
-path, so Flask is asked for `/api/index` and answers 404 for the whole site. So
-the rewrite carries the original path in a `__vpath` query parameter and the
-`_VercelPath` WSGI wrapper restores it, falling back to stripping the mount
-prefix and then to the path as-given.
+reach the function, but the build now warns that *internal rewrites are routed
+using the rewritten destination path*, so Flask is asked for `/api/index` and
+answers 404 for the whole site. So the rewrite carries the original path in a
+`__vpath` query parameter and the `_RestorePath` WSGI wrapper restores it,
+falling back to stripping the mount prefix and then to the path as-given.
+
+*Where that wrapper lives matters more than what it does.* It is applied in
+`webapp/app.py`, on the app object, **not** in an entrypoint. Vercel detects
+Flask as a backend framework and decides for itself which module to import — the
+root `app.py`, `api/index.py`, or neither — so a wrapper guarding one entrypoint
+guards nothing: the deploy that answered `Not Found` for the whole site was one
+where the rewrite fired and the module Vercel had actually imported was the
+unwrapped one. On the app object it covers every entrypoint, plus gunicorn and
+`python app.py`, where it is a no-op.
 
 *The fallback.* A host that cannot interpolate `:vpath*` into the destination
 query would pass the template through verbatim, and no sub-path could be routed
@@ -386,7 +395,7 @@ pipeline reports what actually arrived.
 multimodal-image-generation-studio/
 ├── app.py                  # entrypoint: python app.py
 ├── run.py                  # CLI pipeline
-├── api/index.py            # Vercel entrypoint (same WSGI app)
+├── api/index.py            # Vercel entrypoint (re-export; routing lives on the app)
 ├── vercel.json             # maxDuration 60s, everything rewritten to the function
 ├── requirements.txt
 ├── .env.example            # every key optional

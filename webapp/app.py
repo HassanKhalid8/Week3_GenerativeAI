@@ -27,6 +27,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 from werkzeug.exceptions import NotFound
@@ -452,6 +453,73 @@ def _mirror_api_namespace() -> None:
 
 
 _mirror_api_namespace()
+
+
+# --- serverless path restoration ------------------------------------------
+# This lives on the app itself, not in api/index.py, because the host decides
+# which module it imports. Vercel now detects Flask as a "backend framework"
+# and may serve the root app.py, api/index.py, or this module - and it routes
+# an internal rewrite using the *rewritten* destination path, so whichever one
+# it picks is handed `/api/index` for every URL on the site. A shim that only
+# guards one of those entrypoints guards nothing; wrapping the app covers all
+# of them, including gunicorn and `python app.py`, where it is a no-op.
+
+
+def _usable(value: str) -> bool:
+    """Reject an un-interpolated rewrite template like ':vpath' or '$1'."""
+    return not any(token in value for token in (":", "$", "*"))
+
+
+class _RestorePath:
+    """Give Flask the URL the visitor actually asked for.
+
+    The rewrite carries it in a query parameter because the destination path is
+    fixed. Three sources are tried in turn - the parameter, the mount prefix
+    stripped off, and the path as-given - so the app is correct whether the
+    platform forwards the original path, the rewritten one, or neither.
+    """
+
+    def __init__(self, wsgi_app, prefix: str = FUNCTION_URL):
+        self.wsgi_app = wsgi_app
+        self.prefix = prefix.rstrip("/")
+
+    def __call__(self, environ, start_response):
+        query = environ.get("QUERY_STRING", "")
+        path = environ.get("PATH_INFO", "")
+        state = "absent"
+
+        if PATH_PARAM in query:
+            carried: list[str] = []
+            kept = []
+            for key, value in parse_qsl(query, keep_blank_values=True):
+                if key == PATH_PARAM:
+                    carried.append(value)
+                else:
+                    # Drop our own parameter so the app sees only the caller's query.
+                    kept.append((key, value))
+            environ["QUERY_STRING"] = urlencode(kept)
+            # A request may carry two: one the browser set and one the rewrite
+            # added. Any interpolated value beats a bare template.
+            chosen = next((value for value in carried if _usable(value)), None)
+            if carried:
+                # An empty value is a correctly interpolated "/" - the rewrite
+                # worked - so only a template that survived counts as literal.
+                state = "literal" if chosen is None else "ok"
+            if chosen:
+                path = "/" + chosen.lstrip("/")
+
+        if path == self.prefix or path.startswith(self.prefix + "/"):
+            path = path[len(self.prefix):] or "/"
+
+        environ["PATH_INFO"] = path or "/"
+        environ[VPATH_ENVIRON_KEY] = state
+        # SCRIPT_NAME stays empty: url_for() must keep emitting site-root URLs,
+        # because the browser addresses the site, not the function.
+        environ["SCRIPT_NAME"] = ""
+        return self.wsgi_app(environ, start_response)
+
+
+app.wsgi_app = _RestorePath(app.wsgi_app)
 
 
 def main() -> None:
