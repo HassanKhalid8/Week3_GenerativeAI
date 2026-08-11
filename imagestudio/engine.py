@@ -285,8 +285,32 @@ class Studio:
             gate1=gate1.to_dict(),
         )
 
+        deadline = request.deadline
         for index in range(request.count):
             seed = request.seed_for(index)
+
+            # A batch of five on a slow engine can outlast the host's function
+            # ceiling. Starting an image there buys a gateway timeout and loses
+            # the ones already finished, so the batch stops instead and says so.
+            if index and deadline is not None and time.monotonic() >= deadline:
+                remaining = request.count - index
+                note = (
+                    f"Stopped after {index} of {request.count}: the time budget for one "
+                    f"request ran out. Generate the rest in another batch."
+                )
+                for skipped in range(index, request.count):
+                    result.assets.append(
+                        AssetOutcome(
+                            index=skipped,
+                            status="failed",
+                            seed=request.seed_for(skipped),
+                            error=note,
+                            error_code="budget_exhausted",
+                        )
+                    )
+                emit("note", {"message": note, "level": "warn", "skipped": remaining})
+                break
+
             emit("asset_start", {"index": index, "total": request.count, "seed": seed})
             outcome = self._one(provider, request, composed_prompt, composed_negative, seed, index, emit)
             result.assets.append(outcome)

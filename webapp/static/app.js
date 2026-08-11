@@ -89,7 +89,7 @@ async function boot() {
   updatePromptLimit();
 
   const count = $("#count");
-  count.max = String(state.config.max_count || 4);
+  count.max = String(state.config.max_count || 5);
   if (Number(count.value) > Number(count.max)) count.value = count.max;
   $("#count-value").textContent = count.value;
 }

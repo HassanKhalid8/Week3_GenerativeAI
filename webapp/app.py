@@ -86,9 +86,13 @@ SERVERLESS = bool(os.getenv("VERCEL") or os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
 #: function timeout (vercel.json sets maxDuration to 60s) so a saturated engine
 #: surfaces a readable error instead of a gateway timeout.
 REQUEST_BUDGET_SECONDS = float(os.getenv("IMAGESTUDIO_BUDGET_SECONDS", "52" if SERVERLESS else "0"))
-#: Inlining every asset as base64 has to fit the platform's response cap, so a
-#: serverless batch is capped tighter than a local one.
-EFFECTIVE_MAX_COUNT = 2 if SERVERLESS else MAX_COUNT
+#: One batch size everywhere. Inlining assets as base64 still has to fit the
+#: platform's response cap, but that is enforced by size rather than by count:
+#: the engine's INLINE_BUDGET_BYTES always sends the small preview and only adds
+#: the full-res copy while the body has room, so a big batch degrades instead of
+#: overflowing. The wall-clock ceiling is handled the same way - the batch stops
+#: starting new images once REQUEST_BUDGET_SECONDS is spent.
+EFFECTIVE_MAX_COUNT = MAX_COUNT
 
 MAX_KEY_LENGTH = 400
 

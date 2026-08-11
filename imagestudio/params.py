@@ -27,7 +27,7 @@ ASPECT_RATIOS: dict[str, dict[str, Any]] = {
 }
 
 DEFAULT_ASPECT = "1:1"
-MAX_COUNT = 4
+MAX_COUNT = 5
 SEED_MAX = 2**31 - 1
 
 
