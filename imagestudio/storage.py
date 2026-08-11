@@ -40,7 +40,7 @@ def _is_writable(path: Path) -> bool:
 
 def _fallback_root() -> Path:
     """The last-resort scratch directory. Writable everywhere, persistent nowhere."""
-    fallback = Path(tempfile.gettempdir()) / "lumen-forge-assets"
+    fallback = Path(tempfile.gettempdir()) / "emulsion-assets"
     fallback.mkdir(parents=True, exist_ok=True)
     return fallback
 

@@ -1,0 +1,236 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 480" width="960" height="480" role="img" aria-labelledby="ui-title ui-desc">
+  <title id="ui-title">The Emulsion interface</title>
+  <desc id="ui-desc">An animated schematic of the studio: a composer rail on the left, a seven-stage pipeline rail that lights up left to right, and a gallery whose three images resolve one after another.</desc>
+
+  <defs>
+    <pattern id="ui-grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#0f2837" stroke-width="1" opacity="0.05"/>
+    </pattern>
+    <linearGradient id="ui-shimmer" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0e7490" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#0e7490" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#0e7490" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="ui-sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#cfe3ea"/>
+      <stop offset="100%" stop-color="#eef3f6"/>
+    </linearGradient>
+    <linearGradient id="ui-foot" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#0e7490"/>
+      <stop offset="55%" stop-color="#0891b2"/>
+      <stop offset="100%" stop-color="#15803d"/>
+    </linearGradient>
+    <clipPath id="clip-a"><rect x="300" y="190" width="200" height="140" rx="8"/></clipPath>
+    <clipPath id="clip-b"><rect x="516" y="190" width="200" height="140" rx="8"/></clipPath>
+    <clipPath id="clip-c"><rect x="732" y="190" width="200" height="140" rx="8"/></clipPath>
+
+    <style>
+      /* One 8s loop: type a prompt, run the rail, resolve three images. */
+      text { font-family: ui-monospace, Consolas, "Courier New", monospace; }
+      .lbl   { font-size: 8.5px; fill: #8398a1; letter-spacing: 0.8px; }
+      .ink   { font-size: 9px;   fill: #4b6570; }
+      .title { font-size: 9.5px; fill: #0e7490; letter-spacing: 1.4px; }
+      .box   { fill: #ffffff; stroke: #d7e0e6; stroke-width: 1; }
+      .soft  { fill: #eef3f6; stroke: #e6edf1; stroke-width: 1; }
+
+      .type1, .type2, .type3 { opacity: 0; animation: type 8s linear infinite; }
+      .type2 { animation-delay: 0.25s; }
+      .type3 { animation-delay: 0.5s; }
+      @keyframes type { 0% { opacity: 0 } 6%, 96% { opacity: 1 } 100% { opacity: 0 } }
+
+      .caret { animation: blink 1s steps(1) infinite; }
+      @keyframes blink { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0 } }
+
+      /* The rail: each stage latches teal as the run passes through it. */
+      .dot { fill: #ffffff; stroke: #d7e0e6; stroke-width: 1.5; animation: dot 8s linear infinite; }
+      .dot.d2 { animation-delay: 0.30s } .dot.d3 { animation-delay: 0.60s }
+      .dot.d4 { animation-delay: 0.90s } .dot.d5 { animation-delay: 1.20s }
+      .dot.d6 { animation-delay: 1.50s }
+      @keyframes dot {
+        0%, 3%   { fill: #ffffff; stroke: #d7e0e6 }
+        7%, 93%  { fill: #0e7490; stroke: #0e7490 }
+        97%,100% { fill: #ffffff; stroke: #d7e0e6 }
+      }
+      .dot.last { animation: dot-ok 8s linear infinite; animation-delay: 1.80s; }
+      @keyframes dot-ok {
+        0%, 3%   { fill: #ffffff; stroke: #d7e0e6 }
+        7%, 93%  { fill: #15803d; stroke: #15803d }
+        97%,100% { fill: #ffffff; stroke: #d7e0e6 }
+      }
+      .halo { fill: #0e7490; opacity: 0; animation: halo 8s linear infinite; }
+      .halo.d2 { animation-delay: 0.30s } .halo.d3 { animation-delay: 0.60s }
+      .halo.d4 { animation-delay: 0.90s } .halo.d5 { animation-delay: 1.20s }
+      .halo.d6 { animation-delay: 1.50s } .halo.d7 { animation-delay: 1.80s; fill: #15803d }
+      @keyframes halo { 0%, 3% { opacity: 0 } 7% { opacity: 0.20 } 14%, 100% { opacity: 0 } }
+
+      /* Gallery: shimmer while the bytes stream, then the image lands. */
+      .shim { opacity: 1; animation: shim-out 8s linear infinite; }
+      .shim.b { animation-delay: 0.9s } .shim.c { animation-delay: 1.8s }
+      @keyframes shim-out { 0%, 28% { opacity: 1 } 34%, 100% { opacity: 0 } }
+
+      .shot { opacity: 0; animation: land 8s linear infinite; }
+      .shot.b { animation-delay: 0.9s } .shot.c { animation-delay: 1.8s }
+      @keyframes land { 0%, 28% { opacity: 0 } 36%, 94% { opacity: 1 } 100% { opacity: 0 } }
+
+      .pill { opacity: 0; animation: land 8s linear infinite; }
+      .pill.b { animation-delay: 0.9s } .pill.c { animation-delay: 1.8s }
+
+      .cta { animation: cta 8s ease-in-out infinite; }
+      @keyframes cta { 0%, 4% { opacity: 1 } 8% { opacity: 0.72 } 14%, 100% { opacity: 1 } }
+    </style>
+  </defs>
+
+  <!-- page -->
+  <rect x="0.5" y="0.5" width="959" height="479" rx="14" fill="#f5f7f9" stroke="#d7e0e6"/>
+  <rect x="1" y="1" width="958" height="478" rx="13" fill="url(#ui-grid)"/>
+
+  <!-- top bar -->
+  <path d="M1 14 A13 13 0 0 1 14 1 H946 A13 13 0 0 1 959 14 V47 H1 Z" fill="#ffffff" opacity="0.92"/>
+  <line x1="1" y1="47" x2="959" y2="47" stroke="#d7e0e6"/>
+  <g transform="translate(20,13)">
+    <rect width="22" height="22" rx="5" fill="#eef3f6" stroke="#0e7490" stroke-width="1.2"/>
+    <polyline points="4,18 9,7 13,13 16,10 19,18" fill="none" stroke="#0e7490" stroke-width="1.6" stroke-linejoin="round"/>
+  </g>
+  <text x="52" y="28" font-size="12.5" font-weight="700" fill="#101c22" letter-spacing="0.8">EMULSION</text>
+  <text x="127" y="28" class="lbl">image generation with the whole pipeline in view</text>
+  <rect x="856" y="13" width="88" height="22" rx="7" class="box"/>
+  <text x="900" y="28" class="ink" text-anchor="middle">API KEYS</text>
+
+  <!-- ============ composer ============ -->
+  <rect x="16" y="60" width="252" height="404" rx="10" class="box"/>
+  <text x="32" y="82" class="title">COMPOSE</text>
+
+  <text x="32" y="102" class="lbl">PROMPT</text>
+  <rect x="32" y="108" width="220" height="58" rx="6" class="box"/>
+  <text x="42" y="124" class="ink type1">A lone lighthouse on a basalt</text>
+  <text x="42" y="138" class="ink type2">cliff, storm clouds breaking,</text>
+  <text x="42" y="152" class="ink type3">cold morning light</text>
+  <rect x="152" y="144" width="1.5" height="10" fill="#0e7490" class="caret"/>
+
+  <text x="32" y="186" class="lbl">STYLE</text>
+  <rect x="32"  y="192" width="42" height="17" rx="8.5" class="soft"/>
+  <rect x="80"  y="192" width="52" height="17" rx="8.5" fill="#0e7490"/>
+  <rect x="138" y="192" width="46" height="17" rx="8.5" class="soft"/>
+  <rect x="190" y="192" width="38" height="17" rx="8.5" class="soft"/>
+
+  <text x="32" y="230" class="lbl">ASPECT RATIO</text>
+  <rect x="32"  y="236" width="48" height="30" rx="6" class="soft"/>
+  <rect x="88"  y="236" width="48" height="30" rx="6" fill="#ffffff" stroke="#0e7490"/>
+  <rect x="144" y="236" width="48" height="30" rx="6" class="soft"/>
+  <rect x="200" y="236" width="48" height="30" rx="6" class="soft"/>
+  <rect x="99"  y="244" width="26" height="15" rx="2" fill="none" stroke="#0e7490" stroke-width="1.2"/>
+
+  <text x="32" y="286" class="lbl">IMAGES</text>
+  <line x1="32" y1="296" x2="140" y2="296" stroke="#d7e0e6" stroke-width="3" stroke-linecap="round"/>
+  <line x1="32" y1="296" x2="86"  y2="296" stroke="#0e7490" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="86" cy="296" r="6" fill="#0e7490" stroke="#ffffff" stroke-width="2"/>
+  <text x="160" y="286" class="lbl">SEED</text>
+  <rect x="160" y="290" width="92" height="22" rx="6" class="box"/>
+
+  <text x="32" y="334" class="lbl">ENGINE</text>
+  <rect x="32" y="340" width="220" height="28" rx="6" class="box"/>
+  <text x="44" y="358" class="ink">Auto</text>
+  <path d="M236 352 l5 5 5 -5" fill="none" stroke="#4b6570" stroke-width="1.4"/>
+  <circle cx="36" cy="380" r="3" fill="#15803d"/>
+  <text x="44" y="383" class="lbl">Ready &#183; Pollinations (Flux)</text>
+
+  <rect x="32" y="396" width="220" height="24" rx="6" class="soft"/>
+  <text x="42" y="411" class="lbl">ADVANCED</text>
+
+  <rect x="32" y="428" width="220" height="30" rx="8" fill="#0e7490" class="cta"/>
+  <text x="142" y="447" text-anchor="middle" font-size="10.5" font-weight="700" fill="#ffffff" letter-spacing="1.2">GENERATE</text>
+
+  <!-- ============ pipeline rail ============ -->
+  <rect x="284" y="60" width="660" height="64" rx="10" class="box"/>
+  <line x1="345" y1="88" x2="883" y2="88" stroke="#d7e0e6" stroke-width="1.5"/>
+
+  <g><circle class="halo"    cx="332" cy="88" r="17"/><circle class="dot"      cx="332" cy="88" r="11"/><text x="332" y="112" text-anchor="middle" class="lbl">PAYLOAD</text></g>
+  <g><circle class="halo d2" cx="426" cy="88" r="17"/><circle class="dot d2"   cx="426" cy="88" r="11"/><text x="426" y="112" text-anchor="middle" class="lbl">INPUT</text></g>
+  <g><circle class="halo d3" cx="520" cy="88" r="17"/><circle class="dot d3"   cx="520" cy="88" r="11"/><text x="520" y="112" text-anchor="middle" class="lbl">GATEWAY</text></g>
+  <g><circle class="halo d4" cx="614" cy="88" r="17"/><circle class="dot d4"   cx="614" cy="88" r="11"/><text x="614" y="112" text-anchor="middle" class="lbl">TRANSPORT</text></g>
+  <g><circle class="halo d5" cx="708" cy="88" r="17"/><circle class="dot d5"   cx="708" cy="88" r="11"/><text x="708" y="112" text-anchor="middle" class="lbl">INTEGRITY</text></g>
+  <g><circle class="halo d6" cx="802" cy="88" r="17"/><circle class="dot d6"   cx="802" cy="88" r="11"/><text x="802" y="112" text-anchor="middle" class="lbl">OUTPUT</text></g>
+  <g><circle class="halo d7" cx="896" cy="88" r="17"/><circle class="dot last" cx="896" cy="88" r="11"/><text x="896" y="112" text-anchor="middle" class="lbl">QUALITY</text></g>
+
+  <!-- a payload rides the rail once per loop -->
+  <circle r="4" fill="#0891b2">
+    <animateMotion path="M332,88 L896,88" dur="8s" keyPoints="0;1;1" keyTimes="0;0.25;1" calcMode="linear" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- ============ tabs ============ -->
+  <rect x="284" y="136" width="66" height="22" rx="7" fill="#e2f0f4" stroke="#0891b2"/>
+  <text x="317" y="151" text-anchor="middle" font-size="8.5" fill="#0e7490" letter-spacing="0.8">RESULTS</text>
+  <rect x="356" y="136" width="70" height="22" rx="7" class="box"/>
+  <text x="391" y="151" text-anchor="middle" class="lbl">ACTIVITY</text>
+  <rect x="432" y="136" width="66" height="22" rx="7" class="box"/>
+  <text x="465" y="151" text-anchor="middle" class="lbl">LIBRARY</text>
+  <text x="944" y="151" text-anchor="end" class="lbl">library: 12 assets / 4.1 MB</text>
+
+  <!-- ============ gallery ============ -->
+  <rect x="284" y="168" width="660" height="296" rx="10" class="box"/>
+
+  <!-- card A -->
+  <g>
+    <rect x="300" y="190" width="200" height="182" rx="8" class="box"/>
+    <rect x="300" y="190" width="200" height="140" rx="8" fill="#eef3f6"/>
+    <g clip-path="url(#clip-a)" class="shot">
+      <rect x="300" y="190" width="200" height="140" fill="url(#ui-sky)"/>
+      <circle cx="352" cy="232" r="14" fill="#0e7490" opacity="0.35"/>
+      <path d="M300 306 L346 262 L378 292 L404 270 L500 320 L500 330 L300 330 Z" fill="#0e7490" opacity="0.55"/>
+    </g>
+    <g clip-path="url(#clip-a)"><rect class="shim" x="300" y="190" width="90" height="140" fill="url(#ui-shimmer)">
+      <animateTransform attributeName="transform" type="translate" from="-95 0" to="205 0" dur="1.5s" repeatCount="indefinite"/>
+    </rect></g>
+    <g class="pill">
+      <rect x="310" y="200" width="66" height="16" rx="8" fill="#0b1a20" opacity="0.78"/>
+      <text x="343" y="211" text-anchor="middle" font-size="8" fill="#4ade80">ACCEPTED</text>
+    </g>
+    <rect x="312" y="342" width="52" height="14" rx="4" class="soft"/>
+    <rect x="370" y="342" width="44" height="14" rx="4" class="soft"/>
+    <rect x="420" y="342" width="66" height="14" rx="4" class="soft"/>
+  </g>
+
+  <!-- card B -->
+  <g>
+    <rect x="516" y="190" width="200" height="182" rx="8" class="box"/>
+    <rect x="516" y="190" width="200" height="140" rx="8" fill="#eef3f6"/>
+    <g clip-path="url(#clip-b)" class="shot b">
+      <rect x="516" y="190" width="200" height="140" fill="url(#ui-sky)"/>
+      <circle cx="672" cy="224" r="11" fill="#0891b2" opacity="0.35"/>
+      <path d="M516 312 L562 274 L598 300 L640 258 L716 316 L716 330 L516 330 Z" fill="#0891b2" opacity="0.5"/>
+    </g>
+    <g clip-path="url(#clip-b)"><rect class="shim b" x="516" y="190" width="90" height="140" fill="url(#ui-shimmer)">
+      <animateTransform attributeName="transform" type="translate" from="-95 0" to="205 0" dur="1.5s" repeatCount="indefinite"/>
+    </rect></g>
+    <g class="pill b">
+      <rect x="526" y="200" width="66" height="16" rx="8" fill="#0b1a20" opacity="0.78"/>
+      <text x="559" y="211" text-anchor="middle" font-size="8" fill="#4ade80">ACCEPTED</text>
+    </g>
+    <rect x="528" y="342" width="52" height="14" rx="4" class="soft"/>
+    <rect x="586" y="342" width="44" height="14" rx="4" class="soft"/>
+    <rect x="636" y="342" width="66" height="14" rx="4" class="soft"/>
+  </g>
+
+  <!-- card C: the one the quality gate flags -->
+  <g>
+    <rect x="732" y="190" width="200" height="182" rx="8" class="box"/>
+    <rect x="732" y="190" width="200" height="140" rx="8" fill="#eef3f6"/>
+    <g clip-path="url(#clip-c)" class="shot c">
+      <rect x="732" y="190" width="200" height="140" fill="url(#ui-sky)"/>
+      <circle cx="792" cy="220" r="9" fill="#b45309" opacity="0.3"/>
+      <path d="M732 300 L788 268 L826 296 L862 276 L932 314 L932 330 L732 330 Z" fill="#4b6570" opacity="0.4"/>
+    </g>
+    <g clip-path="url(#clip-c)"><rect class="shim c" x="732" y="190" width="90" height="140" fill="url(#ui-shimmer)">
+      <animateTransform attributeName="transform" type="translate" from="-95 0" to="205 0" dur="1.5s" repeatCount="indefinite"/>
+    </rect></g>
+    <g class="pill c">
+      <rect x="742" y="200" width="60" height="16" rx="8" fill="#0b1a20" opacity="0.78"/>
+      <text x="772" y="211" text-anchor="middle" font-size="8" fill="#fbbf24">FLAGGED</text>
+    </g>
+    <rect x="744" y="342" width="52" height="14" rx="4" class="soft"/>
+    <rect x="802" y="342" width="44" height="14" rx="4" class="soft"/>
+    <rect x="852" y="342" width="66" height="14" rx="4" class="soft"/>
+  </g>
+
+  <rect x="1" y="472" width="958" height="6" rx="3" fill="url(#ui-foot)"/>
+</svg>

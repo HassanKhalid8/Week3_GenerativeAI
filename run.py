@@ -102,7 +102,7 @@ def cmd_history(limit: int) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="run.py",
-        description="Lumen Forge - Multimodal Image Generation Studio - CLI pipeline",
+        description="Emulsion - Image Generation Studio - CLI pipeline",
     )
     parser.add_argument("prompt", nargs="?", help="the text description to render")
     parser.add_argument("-N", "--negative", default="", help="negative prompt")

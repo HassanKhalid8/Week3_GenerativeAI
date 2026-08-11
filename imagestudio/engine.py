@@ -1,4 +1,4 @@
-"""The orchestrator - the complete Project 3 blueprint, end to end.
+"""The orchestrator - the complete pipeline, end to end.
 
   1. Prompt payload formulation   params.py  + styles.py
   2. Network API gateway          transport.py (split timeout, backoff + jitter)

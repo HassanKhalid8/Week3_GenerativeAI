@@ -1,4 +1,4 @@
-/* Lumen Forge - light blueprint console theme.
+/* Emulsion - light blueprint console theme.
    Light drafting grid, teal line work, monospaced instrumentation. */
 
 :root {
@@ -72,9 +72,17 @@ code, pre, .mono { font-family: var(--mono); }
 }
 
 .topbar h1 { font-size: 16px; letter-spacing: 0.2px; }
-.sub { margin: 2px 0 0; font-size: 11.5px; color: var(--ink-faint); font-family: var(--mono); }
+.sub { margin: 2px 0 0; font-size: 11.5px; color: var(--ink-faint); }
 
-.topbar-meta { display: flex; gap: 8px; flex-wrap: wrap; }
+.topbar-actions { display: flex; align-items: center; gap: 10px; }
+
+.ghost-btn {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.6px;
+  padding: 7px 14px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink-dim);
+  transition: color 0.15s, border-color 0.15s;
+}
+.ghost-btn:hover { color: var(--accent); border-color: var(--accent-dim); }
 
 .chip {
   font-family: var(--mono); font-size: 11px; padding: 4px 10px;
@@ -83,14 +91,19 @@ code, pre, .mono { font-family: var(--mono); }
   white-space: nowrap;
 }
 
-/* ---------------- layout ---------------- */
-.layout {
+/* ---------------- layout ----------------
+   A composer rail and a work surface, rather than one column per pipeline
+   phase: the thing a visitor came to do is write a prompt and look at images,
+   so those get the room, and the instrumentation moves behind a tab. */
+.workspace {
   display: grid;
-  grid-template-columns: 340px 360px minmax(0, 1fr);
+  grid-template-columns: 348px minmax(0, 1fr);
   gap: 16px;
   padding: 16px 22px 40px;
   align-items: start;
 }
+
+.stagearea { min-width: 0; }
 
 .panel {
   background: var(--panel);
@@ -111,6 +124,33 @@ code, pre, .mono { font-family: var(--mono); }
   font-family: var(--mono); font-size: 11.5px; letter-spacing: 1.4px;
   color: var(--accent); text-transform: uppercase; margin-bottom: 14px;
 }
+
+.panel-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; margin-bottom: 14px;
+}
+.panel-head .panel-title { margin-bottom: 0; }
+.hint-inline { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); }
+
+/* The composer is long; the action that ends it should never be scrolled off.
+   Sticky rather than a fixed footer, so it releases at the end of the column. */
+.composer-actions {
+  position: sticky; bottom: 0; z-index: 5;
+  margin: 4px -16px -16px; padding: 12px 16px;
+  background: var(--panel); border-top: 1px solid var(--line-soft);
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+
+.engine-state {
+  display: block; margin-top: 6px;
+  font-family: var(--mono); font-size: 10.5px; color: var(--ink-dim);
+}
+.engine-state::before {
+  content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--ok); margin-right: 6px; vertical-align: middle;
+}
+.engine-state.unavailable { color: var(--bad); }
+.engine-state.unavailable::before { background: var(--bad); }
 
 /* ---------------- form controls ---------------- */
 .field { display: block; margin-bottom: 14px; }
@@ -373,17 +413,31 @@ input[type="range"]::-moz-range-thumb {
 .hint { font-size: 11px; color: var(--ink-faint); line-height: 1.5; margin: 8px 0 0; }
 .hint code { color: var(--ink-dim); font-size: 10.5px; }
 
-/* ---------------- pipeline ---------------- */
-.stages { list-style: none; margin: 0 0 16px; padding: 0; counter-reset: stage; }
+/* ---------------- pipeline rail ----------------
+   The seven stages read left to right above the work surface, so progress is
+   glanceable while a batch runs without spending a whole column on it. */
+.runbar {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 10px 12px; margin-bottom: 12px;
+  box-shadow: 0 1px 2px rgba(16, 28, 34, 0.04);
+  overflow-x: auto;
+}
+
+.stages {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; align-items: flex-start; gap: 0; min-width: 660px;
+}
 
 .stage {
-  display: grid; grid-template-columns: 22px 1fr; gap: 10px;
-  padding: 8px 0 8px 2px; position: relative;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  flex: 1 1 0; min-width: 0; padding: 2px 4px; position: relative; text-align: center;
 }
+/* Connector runs dot-edge to dot-edge, behind nothing: the labels sit below. */
 .stage:not(:last-child)::before {
-  content: ""; position: absolute; left: 10px; top: 26px; bottom: -2px;
-  width: 1px; background: var(--line);
+  content: ""; position: absolute; top: 12px; left: calc(50% + 15px);
+  width: calc(100% - 30px); height: 1px; background: var(--line);
 }
+.stage > div { min-width: 0; max-width: 100%; }
 
 .stage-dot {
   width: 20px; height: 20px; border-radius: 50%; flex: none;
@@ -393,10 +447,14 @@ input[type="range"]::-moz-range-thumb {
   z-index: 1; transition: all 0.25s;
 }
 
-.stage-name { font-size: 12.5px; color: var(--ink-dim); }
+.stage-name {
+  font-size: 11px; color: var(--ink-dim); line-height: 1.3;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .stage-detail {
-  font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint);
-  margin-top: 2px; word-break: break-word;
+  font-family: var(--mono); font-size: 10px; color: var(--ink-faint);
+  margin-top: 2px; line-height: 1.3;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 .stage[data-state="running"] .stage-dot {
@@ -440,18 +498,22 @@ input[type="range"]::-moz-range-thumb {
 .log .bad { color: var(--bad); }
 .log .info { color: var(--accent); }
 
-/* ---------------- output ---------------- */
-.output-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.output-head .panel-title { margin-bottom: 0; }
+/* ---------------- work surface ---------------- */
+.worktabs {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 10px; flex-wrap: wrap;
+}
 
 .tabs { display: flex; gap: 4px; }
 .tab {
   background: transparent; border: 1px solid var(--line); color: var(--ink-faint);
   font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.8px;
-  padding: 5px 12px; border-radius: 6px; cursor: pointer; transition: all 0.15s;
+  padding: 6px 14px; border-radius: 7px; cursor: pointer; transition: all 0.15s;
 }
 .tab:hover { color: var(--ink-dim); }
 .tab.active { color: var(--accent); border-color: var(--accent-dim); background: rgba(14, 116, 144, 0.08); }
+
+.workpanel { min-height: 320px; }
 
 .summary {
   display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px;
@@ -586,13 +648,14 @@ input[type="range"]::-moz-range-thumb {
 .icon-btn.close { position: absolute; top: 10px; right: 10px; z-index: 2; font-size: 22px; line-height: 1; }
 
 /* responsive */
-@media (max-width: 1180px) {
-  .layout { grid-template-columns: 1fr 1fr; }
-  .output { grid-column: 1 / -1; }
+@media (max-width: 1080px) {
+  .workspace { grid-template-columns: 1fr; }
+  .composer-actions { position: static; margin: 4px 0 0; padding: 12px 0 0; }
 }
 @media (max-width: 760px) {
-  .layout { grid-template-columns: 1fr; padding: 12px; }
-  .topbar { flex-direction: column; align-items: flex-start; }
+  .workspace { padding: 12px; gap: 12px; }
+  .topbar { flex-direction: column; align-items: flex-start; gap: 10px; }
   .inspector-body { grid-template-columns: 1fr; }
   .ratio-grid { grid-template-columns: repeat(4, 1fr); }
+  .trace-block .code, .log { max-height: 150px; }
 }

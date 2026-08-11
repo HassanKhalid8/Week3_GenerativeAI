@@ -9,7 +9,21 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
-const KEY_STORE = "lumenforge.api-keys.v1";
+const KEY_STORE = "emulsion.api-keys.v1";
+const KEY_STORE_LEGACY = "lumenforge.api-keys.v1";
+
+/* A rename must not quietly sign people out of their own engines: keys saved
+   under the previous product name move across once, then the old entry goes. */
+(function migrateKeyStore() {
+  try {
+    const legacy = localStorage.getItem(KEY_STORE_LEGACY);
+    if (!legacy) return;
+    if (!localStorage.getItem(KEY_STORE)) localStorage.setItem(KEY_STORE, legacy);
+    localStorage.removeItem(KEY_STORE_LEGACY);
+  } catch {
+    /* storage unavailable - nothing saved, nothing to migrate */
+  }
+})();
 
 const state = {
   config: null,
@@ -88,7 +102,9 @@ function bootFailed(response, error) {
     `The server is reachable but that route is not returning JSON, which points at ` +
     `the deployment's rewrite rules rather than the app itself. Check ${api("health")}.`;
   box.hidden = false;
-  $("#engine-chip").textContent = "engine: unavailable";
+  const engine = $("#engine-chip");
+  engine.textContent = "Engine unavailable";
+  engine.classList.add("unavailable");
   $("#library-chip").textContent = "library: unavailable";
   $("#generate").disabled = true;
   console.error("boot failed:", error);
@@ -216,7 +232,8 @@ async function refreshEngines() {
     /* keep whatever the config call gave us */
   }
   const active = state.config.providers.find((p) => p.name === state.config.active_provider);
-  $("#engine-chip").textContent = `engine: ${active ? active.label : state.config.active_provider}`;
+  // The resolved engine belongs next to the picker, where the choice is made.
+  $("#engine-chip").textContent = `Ready · ${active ? active.label : state.config.active_provider}`;
 
   // A saved key may have been removed while its engine was selected.
   if (state.provider !== "auto") {
@@ -435,13 +452,7 @@ function wireControls() {
   });
 
   $$(".tab").forEach((tab) => {
-    tab.addEventListener("click", () => {
-      $$(".tab").forEach((t) => t.classList.toggle("active", t === tab));
-      const showLibrary = tab.dataset.tab === "library";
-      $("#tab-results").hidden = showLibrary;
-      $("#tab-library").hidden = !showLibrary;
-      if (showLibrary) loadLibrary();
-    });
+    tab.addEventListener("click", () => showTab(tab.dataset.tab));
   });
 
   $("#inspector-close").addEventListener("click", closeInspector);
@@ -455,7 +466,33 @@ function wireControls() {
   });
 }
 
+/** Switch the work surface. Panels declare which tab owns them, so adding one
+    is a matter of markup rather than another branch here. */
+function showTab(name) {
+  $$(".tab").forEach((tab) => {
+    const on = tab.dataset.tab === name;
+    tab.classList.toggle("active", on);
+    tab.setAttribute("aria-selected", String(on));
+  });
+  $$("[data-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.panel !== name;
+  });
+  if (name === "library") loadLibrary();
+}
+
 /* --------------------------------------------------------------- stages */
+
+/* The rail runs across the top, so it shows a short name and keeps the server's
+   full label as the tooltip. Anything not listed falls back to that label. */
+const STAGE_SHORT = {
+  payload: "Payload",
+  gate1: "Input filter",
+  network: "Gateway",
+  transport: "Transport",
+  integrity: "Integrity",
+  gate2: "Output filter",
+  qa: "Quality",
+};
 
 function renderStages() {
   const host = $("#stages");
@@ -465,12 +502,14 @@ function renderStages() {
     item.className = "stage";
     item.dataset.stage = stage.key;
     item.dataset.state = "idle";
+    item.title = stage.label;
     item.innerHTML = `
       <span class="stage-dot">${index + 1}</span>
       <div>
-        <div class="stage-name">${stage.label}</div>
+        <div class="stage-name"></div>
         <div class="stage-detail"></div>
       </div>`;
+    item.querySelector(".stage-name").textContent = STAGE_SHORT[stage.key] || stage.label;
     host.appendChild(item);
   });
 }

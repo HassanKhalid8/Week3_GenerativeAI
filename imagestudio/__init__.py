@@ -1,6 +1,6 @@
-"""Multimodal Image Generation Studio - DecodeLabs Generative AI Project 3.
+"""Emulsion - the image generation pipeline behind the studio.
 
-A text-to-image studio built as a six-stage production pipeline rather than a
+A text-to-image studio built as a seven-stage production pipeline rather than a
 single API call: payload formulation, a shielded network gateway, dual moderation
 gates, memory-safe chunked transport, forced pixel-level integrity verification,
 and automated quality assurance.

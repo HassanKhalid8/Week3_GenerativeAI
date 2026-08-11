@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Lumen Forge — Multimodal Image Generation Studio</title>
+<title>Emulsion — Image Generation Studio</title>
+<meta name="description" content="Generate images from a prompt, with the whole pipeline — payload, transport, integrity and quality checks — visible while it runs." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="stylesheet" href="/static/app.css" />
 <!-- How this page should address the server. The default suits any host that
@@ -18,21 +19,23 @@
   <div class="brand">
     <span class="brand-mark" aria-hidden="true"></span>
     <div>
-      <h1>Lumen Forge</h1>
-      <p class="sub">Multimodal Image Generation Studio &middot; DecodeLabs Project 3 &middot; visual orchestration through pure programmatic control</p>
+      <h1>Emulsion</h1>
+      <p class="sub">Image generation with the whole pipeline in view</p>
     </div>
   </div>
-  <div class="topbar-meta">
-    <div class="chip" id="engine-chip">engine: &mdash;</div>
-    <div class="chip" id="library-chip">library: &mdash;</div>
+  <div class="topbar-actions">
+    <button type="button" id="open-vault" class="ghost-btn">API keys</button>
   </div>
 </header>
 
-<main class="layout">
+<main class="workspace">
 
-  <!-- ===================== CONTROL COLUMN ===================== -->
-  <section class="panel controls" aria-label="Generation controls">
-    <h2 class="panel-title">[ Input Phase ]</h2>
+  <!-- ===================== COMPOSER ===================== -->
+  <aside class="panel composer" aria-label="Composer">
+    <div class="panel-head">
+      <h2 class="panel-title">Compose</h2>
+      <span class="hint-inline">Ctrl + Enter</span>
+    </div>
 
     <label class="field">
       <span class="label-row">
@@ -51,13 +54,13 @@
     </label>
 
     <div class="field">
-      <span class="label-row"><span>Style preset</span></span>
+      <span class="label-row"><span>Style</span></span>
       <div id="styles" class="chip-grid"></div>
     </div>
 
     <div class="field">
       <span class="label-row">
-        <span>Aspect ratio &rarr; exact pixel payload</span>
+        <span>Aspect ratio</span>
         <em id="ratio-detail" class="muted">&mdash;</em>
       </span>
       <div id="ratios" class="ratio-grid"></div>
@@ -65,7 +68,7 @@
 
     <div class="row">
       <label class="field grow">
-        <span class="label-row"><span>Generation count</span><em id="count-value">1</em></span>
+        <span class="label-row"><span>Images</span><em id="count-value">1</em></span>
         <input type="range" id="count" min="1" max="4" step="1" value="1" />
       </label>
       <label class="field seed-field">
@@ -78,10 +81,7 @@
     </div>
 
     <div class="field">
-      <span class="label-row">
-        <span>Engine</span>
-        <button type="button" id="open-vault" class="link-btn">Manage keys</button>
-      </span>
+      <span class="label-row"><span>Engine</span></span>
       <div class="combo" id="provider-combo">
         <button type="button" id="provider-trigger" class="combo-trigger"
                 role="combobox" aria-expanded="false" aria-haspopup="listbox"
@@ -91,11 +91,12 @@
         <ul class="combo-list" id="provider-list" role="listbox"
             aria-label="Generation engine" tabindex="-1" hidden></ul>
       </div>
+      <small id="engine-chip" class="engine-state">Resolving&hellip;</small>
       <small id="provider-note" class="muted"></small>
     </div>
 
     <details class="advanced">
-      <summary>Transport &amp; QA policy</summary>
+      <summary>Advanced</summary>
       <div class="row">
         <label class="field grow">
           <span class="label-row"><span>Connect timeout</span><em id="ct-value">3.05s</em></span>
@@ -112,62 +113,66 @@
           <input type="range" id="max-retries" min="0" max="6" step="1" value="3" />
         </label>
         <label class="field grow">
-          <span class="label-row"><span>QA threshold</span><em id="qa-value">7.0</em></span>
+          <span class="label-row"><span>Quality gate</span><em id="qa-value">7.0</em></span>
           <input type="range" id="qa-threshold" min="0" max="10" step="0.5" value="7" />
         </label>
       </div>
       <label class="checkbox">
         <input type="checkbox" id="qa-discard" />
-        <span>Discard assets that fall below the QA gate</span>
+        <span>Discard images that fall below the quality gate</span>
       </label>
       <p class="hint">
-        The split timeout is passed to <code>requests</code> as <code>(connect, read)</code>.
-        Connect failures fail fast; read failures retry with exponential backoff and jitter.
+        Timeouts are split into <code>(connect, read)</code>. Connect failures fail fast;
+        read failures retry with exponential backoff and jitter.
       </p>
     </details>
 
-    <button id="generate" class="primary">Generate</button>
-    <p id="form-error" class="form-error" hidden></p>
-  </section>
+    <div class="composer-actions">
+      <button id="generate" class="primary">Generate</button>
+      <p id="form-error" class="form-error" hidden></p>
+    </div>
+  </aside>
 
-  <!-- ===================== PIPELINE COLUMN ===================== -->
-  <section class="panel pipeline" aria-label="Pipeline trace">
-    <h2 class="panel-title">[ Process Phase ]</h2>
-    <ol id="stages" class="stages"></ol>
+  <!-- ===================== STAGE ===================== -->
+  <section class="stagearea" aria-label="Results">
 
-    <div class="trace-block">
-      <h3>Serialized payload</h3>
-      <pre id="payload-view" class="code">awaiting a request&hellip;</pre>
+    <div class="runbar">
+      <ol id="stages" class="stages"></ol>
     </div>
 
-    <div class="trace-block">
-      <h3>Gateway log</h3>
-      <div id="log" class="log"><p class="muted">No traffic yet.</p></div>
-    </div>
-  </section>
-
-  <!-- ===================== OUTPUT COLUMN ===================== -->
-  <section class="panel output" aria-label="Generated assets">
-    <div class="output-head">
-      <h2 class="panel-title">[ Output Phase ]</h2>
-      <div class="tabs">
-        <button class="tab active" data-tab="results">Results</button>
-        <button class="tab" data-tab="library">Library</button>
+    <div class="worktabs">
+      <div class="tabs" role="tablist" aria-label="Workspace">
+        <button class="tab active" data-tab="results" role="tab" aria-selected="true">Results</button>
+        <button class="tab" data-tab="activity" role="tab" aria-selected="false">Activity</button>
+        <button class="tab" data-tab="library" role="tab" aria-selected="false">Library</button>
       </div>
+      <span class="chip" id="library-chip">library: &mdash;</span>
     </div>
 
-    <div id="tab-results">
+    <div class="panel workpanel" id="tab-results" data-panel="results">
       <div id="summary" class="summary" hidden></div>
       <div id="gallery" class="gallery">
         <div class="empty">
           <div class="empty-frame" aria-hidden="true"></div>
           <p>Describe an image and hit <strong>Generate</strong>.</p>
-          <p class="muted">Assets stream to disk in 64&nbsp;KiB chunks, get a forced pixel-level decode, then a QA score.</p>
+          <p class="muted">Every image is streamed to disk, decoded pixel by pixel to prove it is
+            not a truncated file, then scored before it reaches you.</p>
         </div>
       </div>
     </div>
 
-    <div id="tab-library" hidden>
+    <div class="panel workpanel" id="tab-activity" data-panel="activity" hidden>
+      <div class="trace-block">
+        <h3>Request payload</h3>
+        <pre id="payload-view" class="code">awaiting a request&hellip;</pre>
+      </div>
+      <div class="trace-block">
+        <h3>Gateway log</h3>
+        <div id="log" class="log"><p class="muted">No traffic yet.</p></div>
+      </div>
+    </div>
+
+    <div class="panel workpanel" id="tab-library" data-panel="library" hidden>
       <div id="library" class="library"></div>
     </div>
   </section>
@@ -177,7 +182,7 @@
 <div id="keyvault" class="inspector" hidden>
   <div class="inspector-panel kv-panel" role="dialog" aria-modal="true" aria-labelledby="kv-title">
     <button id="keyvault-close" class="icon-btn close" aria-label="Close">&times;</button>
-    <h3 class="panel-title" id="kv-title">[ API Key Vault ]</h3>
+    <h3 class="panel-title" id="kv-title">API keys</h3>
 
     <div class="kv-privacy">
       <p class="kv-privacy-head">Your keys stay yours</p>
@@ -196,7 +201,7 @@
 
 <!-- asset inspector -->
 <div id="inspector" class="inspector" hidden>
-  <div class="inspector-panel" role="dialog" aria-modal="true" aria-label="Asset details">
+  <div class="inspector-panel" role="dialog" aria-modal="true" aria-label="Image details">
     <button id="inspector-close" class="icon-btn close" aria-label="Close">&times;</button>
     <div class="inspector-body">
       <img id="inspector-image" alt="" />

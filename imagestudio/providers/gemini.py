@@ -1,4 +1,8 @@
-"""Google Gemini image generation - free tier via AI Studio.
+"""Google Gemini image generation - paid, via an AI Studio key.
+
+Google's free tier covers the text models; every image model (Gemini Flash Image
+and Imagen alike) is listed as "not available" on it, so a key from a project
+without billing authenticates and then fails at generation time.
 
 Returns base64 inline data inside a JSON envelope, so the bytes are decoded in
 memory and then written through the same chunked disk-writer as every other
@@ -28,8 +32,8 @@ class GeminiProvider(Provider):
     max_prompt_chars = 4000
     supports_negative = False       # expressed in-band
     supports_seed = False
-    free = True
-    notes = "Free-tier key from aistudio.google.com/app/apikey. Returns base64 inline image data."
+    free = False
+    notes = "Needs a billing-enabled key; image models are not on Google's free tier."
     key_url = "https://aistudio.google.com/app/apikey"
     key_hint = "AIza..."
     verify_url = "https://generativelanguage.googleapis.com/v1beta/models"

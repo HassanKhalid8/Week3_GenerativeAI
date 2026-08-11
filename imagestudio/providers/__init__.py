@@ -38,7 +38,7 @@ REGISTRY: dict[str, type[Provider]] = {
 }
 
 # Free and key-less first, then free-with-key, then paid, then offline.
-AUTO_ORDER = ("pollinations", "gemini", "huggingface", "stability", "openai", "mock")
+AUTO_ORDER = ("pollinations", "huggingface", "gemini", "stability", "openai", "mock")
 
 
 def _options_for(name: str) -> dict:

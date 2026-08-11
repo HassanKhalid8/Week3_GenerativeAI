@@ -532,7 +532,7 @@ def main() -> None:
     args = parser.parse_args()
 
     active = provider_registry.resolve("auto")
-    print("  Lumen Forge - Multimodal Image Generation Studio")
+    print("  Emulsion - Image Generation Studio")
     print(f"  Engine    : {active.label} ({'no key required' if not active.env_key else active.env_key + ' detected'})")
     print(f"  Assets    : {assets_root()}")
     print(f"  Transport : {'single-request (serverless)' if SERVERLESS else 'server-sent events'}")
