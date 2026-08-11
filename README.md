@@ -273,28 +273,44 @@ picked up automatically. No environment variables are required — the deployed
 studio runs on Pollinations, and visitors supply their own keys for anything
 else through the key vault.
 
-`GET /api/health` reports the path Flask actually received, whether the
-templates and static files made it into the bundle, and where assets are being
-written — one request tells you whether a bad deploy is a routing problem or a
-bundling problem.
+`GET /studio/health` reports the path Flask actually received, how the request
+was routed to it, whether the templates and static files made it into the
+bundle, and where assets are being written — one request tells you whether a bad
+deploy is a routing problem or a bundling problem.
 
 **A note on the catch-all rewrite.** Everything is rewritten to the single
-function at `api/index.py`, and getting the real URL to Flask takes some care:
+function at `api/index.py`, and getting the real URL to Flask takes some care.
 
-* Vercel's filesystem routing binds that file to exactly one URL, `/api/index`.
-  Rewriting to `/api/index/<path>` therefore 404s every URL but `/`, because no
-  function is mounted at those sub-paths.
-* Rewriting to a bare `/api/index` does reach the function, but Vercel now
-  routes internal rewrites using the *rewritten* path, so Flask is asked for
-  `/api/index` and answers 404 for the whole site.
+*The prefix.* `/api/*` belongs to the platform, not to the app. Vercel matches
+that prefix against the files in `api/` and answers **404 for every other `/api`
+URL before the rewrite in `vercel.json` is consulted** — which is why a deploy
+could serve the page perfectly and still 404 on `/api/config`. The browser
+therefore talks to the JSON API at **`/studio/*`**, a prefix Vercel has no
+opinion about. Both prefixes are registered (`_mirror_api_namespace()`), so
+`curl /api/config` and the test suite keep working locally.
 
-So the rewrite carries the original path in a `__vpath` query parameter and the
+*The path.* Vercel's filesystem routing binds `api/index.py` to exactly one URL,
+`/api/index`. Rewriting to `/api/index/<path>` 404s every URL but `/`, because
+no function is mounted at those sub-paths; rewriting to a bare `/api/index` does
+reach the function, but the internal rewrite is routed using the *rewritten*
+path, so Flask is asked for `/api/index` and answers 404 for the whole site. So
+the rewrite carries the original path in a `__vpath` query parameter and the
 `_VercelPath` WSGI wrapper restores it, falling back to stripping the mount
-prefix and then to the path as-given — the app is correct under all three
-routing behaviours. Belt and braces: `/` serves the stylesheet and script
-**inlined**, so the interface no longer depends on `/static/*` routing at all
-(and a cold start costs two fewer round trips). If `/api/config` ever does come
-back wrong, the page says so explicitly instead of rendering an inert shell.
+prefix and then to the path as-given.
+
+*The fallback.* A host that cannot interpolate `:vpath*` into the destination
+query would pass the template through verbatim, and no sub-path could be routed
+by URL at all. The entrypoint records which of the two it saw, and `/` — the one
+URL the rewrite is guaranteed to get right — stamps the answer into the page as
+`window.__STUDIO_ROUTING__`. In that case the front-end addresses the function's
+own URL directly, `/api/index?__vpath=studio/config`, which needs no rewrite to
+work. Every URL the page builds goes through one `appUrl()` helper, so this is a
+single switch rather than a sprinkling of special cases.
+
+Belt and braces on top: `/` serves the stylesheet and script **inlined**, so the
+interface never depends on `/static/*` routing (and a cold start costs two fewer
+round trips), and if the config call ever does come back wrong the page says so
+explicitly instead of rendering an inert shell.
 
 Two things about a serverless host change how the studio behaves, and both are
 handled rather than hidden:
@@ -312,8 +328,8 @@ depends on a second request finding the file on the same instance.
 
 **Each request is its own process.** The POST that starts a job and the GET that
 reads its event stream can land on different instances, which makes SSE and the
-in-memory job registry unusable. When `VERCEL` is set, `/api/config` reports
-`streaming: false` and the browser calls `POST /api/generate/sync`, which runs
+in-memory job registry unusable. When `VERCEL` is set, `/studio/config` reports
+`streaming: false` and the browser calls `POST /studio/generate/sync`, which runs
 the batch inside one request and returns the collected event log for the client
 to replay through the same handlers. The pipeline still animates; it just
 animates after the fact. Batch size drops to 2 so the inlined images fit
@@ -323,14 +339,18 @@ throttled engine reports a readable error instead of a gateway timeout.
 
 ### Endpoints
 
+Every route below is served under **both** `/studio/…` and `/api/…`. The browser
+uses `/studio` because Vercel reserves `/api`; locally either works.
+
 | Route | Purpose |
 |---|---|
-| `GET /api/config` | ratios, styles, engines, stages, transport profile |
-| `POST /api/engines` | re-read engine availability with the caller's keys applied |
-| `POST /api/keys/validate` | probe one key against its engine without generating |
-| `POST /api/generate` → `GET /api/jobs/<id>/events` | streaming transport (local) |
-| `POST /api/generate/sync` | single-request transport (serverless) |
-| `GET /api/history` | manifest entries plus library stats |
+| `GET /studio/health` | liveness, routing and bundling probe |
+| `GET /studio/config` | ratios, styles, engines, stages, transport profile |
+| `POST /studio/engines` | re-read engine availability with the caller's keys applied |
+| `POST /studio/keys/validate` | probe one key against its engine without generating |
+| `POST /studio/generate` → `GET /studio/jobs/<id>/events` | streaming transport (local) |
+| `POST /studio/generate/sync` | single-request transport (serverless) |
+| `GET /studio/history` | manifest entries plus library stats |
 | `GET /assets/<file>[/download]` | stored asset, 404 if this instance never wrote it |
 
 ---

@@ -24,15 +24,40 @@ const state = {
   combo: { open: false, index: 0, options: [], typed: "", typedAt: 0 },
 };
 
+/* ------------------------------------------------------------------ urls */
+
+/* Every server URL is built here, because the studio does not always own its
+   own address space. On a serverless host the whole site is funnelled into one
+   function by a rewrite rule, and the page it served says - in
+   window.__STUDIO_ROUTING__ - whether that rewrite can carry a path at all.
+   When it cannot, the route travels as a query parameter to the function's own
+   URL, which no rewrite has to touch. Locally this is just the identity. */
+
+function appUrl(path, params) {
+  const routing = window.__STUDIO_ROUTING__ || { mode: "path" };
+  const query = new URLSearchParams(params || {});
+  if (routing.mode !== "query") {
+    const rest = query.toString();
+    return rest ? `${path}?${rest}` : path;
+  }
+  query.set(routing.param || "__vpath", path.replace(/^\//, ""));
+  return `${routing.base || "/api/index"}?${query}`;
+}
+
+/* The JSON API lives under /studio, not /api: Vercel reserves /api for its own
+   function files and 404s anything else there before our rewrite is reached. */
+const api = (route, params) => appUrl(`/studio/${route}`, params);
+const assetUrl = (filename) => appUrl(`/assets/${filename}`);
+
 /* ------------------------------------------------------------------ boot */
 
 async function boot() {
   let response;
   try {
-    response = await fetch("/api/config");
+    response = await fetch(api("config"));
     state.config = await response.json();
   } catch (error) {
-    // A misrouted deploy answers /api/config with the HTML shell, so the parse
+    // A misrouted deploy answers with the HTML shell instead, so the parse
     // fails and every control below would silently never render. Say so.
     bootFailed(response, error);
     return;
@@ -59,9 +84,9 @@ function bootFailed(response, error) {
   const status = response ? `${response.status} ${response.statusText}` : "no response";
   const box = $("#form-error");
   box.textContent =
-    `The studio could not load its configuration from /api/config (${status}). ` +
+    `The studio could not load its configuration from ${api("config")} (${status}). ` +
     `The server is reachable but that route is not returning JSON, which points at ` +
-    `the deployment's rewrite rules rather than the app itself. Check /api/health.`;
+    `the deployment's rewrite rules rather than the app itself. Check ${api("health")}.`;
   box.hidden = false;
   $("#engine-chip").textContent = "engine: unavailable";
   $("#library-chip").textContent = "library: unavailable";
@@ -179,7 +204,7 @@ function updateRatioDetail() {
     The server knows about its own env vars too, so it is the honest authority. */
 async function refreshEngines() {
   try {
-    const response = await fetch("/api/engines", {
+    const response = await fetch(api("engines"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ api_keys: loadKeys() }),
@@ -188,7 +213,7 @@ async function refreshEngines() {
     state.config.providers = data.providers;
     state.config.active_provider = data.active_provider;
   } catch {
-    /* keep whatever /api/config gave us */
+    /* keep whatever the config call gave us */
   }
   const active = state.config.providers.find((p) => p.name === state.config.active_provider);
   $("#engine-chip").textContent = `engine: ${active ? active.label : state.config.active_provider}`;
@@ -626,7 +651,7 @@ async function generate() {
 async function generateStreaming(payload) {
   let jobId;
   try {
-    const response = await fetch("/api/generate", {
+    const response = await fetch(api("generate"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -638,7 +663,7 @@ async function generateStreaming(payload) {
     return;
   }
 
-  const source = new EventSource(`/api/jobs/${jobId}/events`);
+  const source = new EventSource(api(`jobs/${jobId}/events`));
   state.eventSource = source;
 
   const kinds = ["stage", "note", "retry", "progress", "asset_start", "asset_done"];
@@ -662,7 +687,7 @@ async function generateStreaming(payload) {
 async function generateSync(payload) {
   let data;
   try {
-    const response = await fetch("/api/generate/sync", {
+    const response = await fetch(api("generate/sync"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -721,7 +746,7 @@ function metric(label, value, tone = "") {
 
 /** What the browser can render without asking the server again. The small
     inline preview is always present; the full-res copy is only inlined while
-    the response body has room, so /assets/<file> is the fallback for it. */
+    the response body has room, so the stored asset URL is the fallback for it. */
 function thumbSource(outcome) {
   return outcome.preview_url || outcome.data_url || outcome.url || "";
 }
@@ -974,7 +999,7 @@ function renderVault(focusEngine = "") {
         }
         setStatus("Checking the key with the engine…", "busy");
         try {
-          const response = await fetch("/api/keys/validate", {
+          const response = await fetch(api("keys/validate"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ engine: provider.name, key: value }),
@@ -1073,7 +1098,7 @@ async function loadLibrary() {
 
   let data = { entries: [], library: state.config.library };
   try {
-    const response = await fetch("/api/history");
+    const response = await fetch(api("history"));
     data = await response.json();
   } catch {
     /* fall back to the session list alone */
@@ -1105,7 +1130,7 @@ async function loadLibrary() {
     const row = document.createElement("div");
     row.className = `lib-row${entry.session ? " session" : ""}`;
 
-    const src = entry.preview_url || entry.data_url || (entry.filename ? `/assets/${entry.filename}` : "");
+    const src = entry.preview_url || entry.data_url || (entry.filename ? assetUrl(entry.filename) : "");
     const thumb = src
       ? `<img src="${src}" alt="" loading="lazy" />`
       : `<div class="lib-thumb-missing">✕</div>`;
@@ -1133,7 +1158,7 @@ async function loadLibrary() {
         }));
       });
       img.addEventListener("click", () => {
-        const target = entry.data_url || entry.preview_url || `/assets/${entry.filename}`;
+        const target = entry.data_url || entry.preview_url || assetUrl(entry.filename);
         window.open(target, "_blank", "noopener");
       });
     }
@@ -1143,7 +1168,7 @@ async function loadLibrary() {
 
 async function refreshLibraryChip() {
   try {
-    const response = await fetch("/api/history");
+    const response = await fetch(api("history"));
     const data = await response.json();
     updateLibraryChip(data.library);
   } catch {

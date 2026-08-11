@@ -56,6 +56,27 @@ from imagestudio.transport import (  # noqa: E402
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
+# --- URL namespaces -------------------------------------------------------
+# Vercel owns /api/*. Its zero-config router matches that prefix against the
+# files in api/ and answers 404 for every other /api URL *before* the catch-all
+# rewrite in vercel.json is consulted, so on the deployed site the page loaded
+# but /api/config never reached Flask. The browser therefore addresses the JSON
+# API through /studio/*, a prefix the platform has no opinion about. Every rule
+# below is registered under both prefixes, so local runs, curl and the test
+# suite keep working against /api/*.
+API_PREFIX = "/api/"
+CLIENT_PREFIX = "/studio/"
+
+#: The URL Vercel's filesystem routing assigns to api/index.py - the one /api
+#: path that is guaranteed to reach Python - and the query parameter that
+#: carries the real path through it. api/index.py imports both from here.
+FUNCTION_URL = "/api/index"
+PATH_PARAM = "__vpath"
+#: WSGI environ key the entrypoint uses to report whether the platform's
+#: rewrite interpolated PATH_PARAM ("ok"), left the template uninterpolated
+#: ("literal"), or never ran at all ("absent", i.e. a direct/local request).
+VPATH_ENVIRON_KEY = "imagestudio.vpath"
+
 # --- host profile ---------------------------------------------------------
 # Serverless hosts kill a function at a fixed ceiling and give each invocation
 # its own process, which rules out both SSE and the cross-request job registry.
@@ -205,10 +226,31 @@ def _document() -> str:
     return _DOCUMENT_CACHE["html"]
 
 
+#: Default literal in index.html, swapped for the live hint on every render.
+ROUTING_DEFAULT = '{"mode":"path"}'
+
+
+def _routing_hint() -> dict:
+    """Tell the browser how to address this app, based on how it was reached.
+
+    The page itself always loads: `/` is what the catch-all rewrite was written
+    for. Whether *other* paths survive that rewrite is the part that varies by
+    platform, and this request is the evidence - the entrypoint has already
+    reported whether the rewrite interpolated the path parameter or handed us
+    the template verbatim. If it cannot interpolate, no sub-path can be routed
+    by URL at all, so the front-end is told to call the function's own URL and
+    put the route in the query string, which needs no rewrite to work.
+    """
+    if request.environ.get(VPATH_ENVIRON_KEY) == "literal":
+        return {"mode": "query", "base": FUNCTION_URL, "param": PATH_PARAM}
+    return {"mode": "path"}
+
+
 @app.get("/")
 def index():
     try:
-        return Response(_document(), mimetype="text/html")
+        html = _document().replace(ROUTING_DEFAULT, json.dumps(_routing_hint(), separators=(",", ":")), 1)
+        return Response(html, mimetype="text/html")
     except OSError as exc:
         # A deploy that failed to bundle the front-end would otherwise answer a
         # generic 404 that says nothing about what is actually missing.
@@ -236,6 +278,8 @@ def health():
             "serverless": SERVERLESS,
             "streaming": not SERVERLESS,
             "path_seen_by_flask": request.path,
+            "vpath_state": request.environ.get(VPATH_ENVIRON_KEY, "absent"),
+            "routing_hint": _routing_hint(),
             "template_bundled": (root / app.template_folder / "index.html").is_file(),
             "static_bundled": (root / app.static_folder / "app.js").is_file(),
             "assets_root": str(assets_root()),
@@ -386,6 +430,28 @@ def asset(filename: str):
 @app.get("/assets/<path:filename>/download")
 def asset_download(filename: str):
     return _serve_asset(filename, as_attachment=True)
+
+
+def _mirror_api_namespace() -> None:
+    """Publish every /api/* rule under /studio/* as well.
+
+    One decorator per view stays the readable form, and this keeps the two
+    namespaces from drifting: a route added under /api is reachable from the
+    browser automatically. See the API_PREFIX note above for why the browser
+    cannot use /api on Vercel.
+    """
+    for rule in list(app.url_map.iter_rules()):
+        if not rule.rule.startswith(API_PREFIX):
+            continue
+        app.add_url_rule(
+            CLIENT_PREFIX + rule.rule[len(API_PREFIX):],
+            endpoint=f"{rule.endpoint}__studio",
+            view_func=app.view_functions[rule.endpoint],
+            methods=sorted(rule.methods - {"HEAD", "OPTIONS"}),
+        )
+
+
+_mirror_api_namespace()
 
 
 def main() -> None:
